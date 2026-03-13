@@ -278,6 +278,163 @@ pub const COMPRESSION_JPEGXL: u16 = 50005;
 
 ---
 
+### 1.1 HTML Visual Test Reports
+**Status:** ❌ **TODO**
+
+**Issue:** Current test output is text-based, making it hard to visually identify compression artifacts or metadata issues.
+
+**Solution (v0.3.0):**
+
+**Generate HTML report with:**
+- Side-by-side image comparison (before/after)
+- PNG thumbnails for quick visual inspection
+- Metadata comparison table
+- Pass/fail indicators with color coding
+- Expandable details for each test case
+- Summary dashboard with statistics
+
+**Implementation:**
+
+```bash
+# Script: tests/generate_html_report.sh
+# Dependencies: gdal, Python3, Pillow
+
+for each test image:
+  1. Convert TIFF to PNG thumbnail (256x256)
+     - gdal_translate -of PNG -outsize 256 256 input.tif thumb.png
+  2. Generate difference image (highlight changes)
+     - Create RGB diff visualization
+  3. Extract metadata as JSON
+     - gdalinfo -json input.tif > meta_orig.json
+     - gdalinfo -json compressed.tif > meta_comp.json
+  4. Generate HTML report
+```
+
+**HTML Report Structure:**
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <title>tiffthin-rs Test Report</title>
+  <style>
+    .test-case { border: 1px solid #ccc; margin: 10px; padding: 10px; }
+    .pass { border-left: 5px solid #28a745; }
+    .fail { border-left: 5px solid #dc3545; }
+    .image-comparison { display: flex; gap: 10px; }
+    .image-comparison img { max-width: 256px; }
+    .metadata-table { width: 100%; border-collapse: collapse; }
+    .metadata-table td { border: 1px solid #ddd; padding: 5px; }
+    .diff { background-color: #fff3cd; }
+  </style>
+</head>
+<body>
+  <h1>Test Report Summary</h1>
+  <div class="summary">
+    <span class="pass">Passed: 31</span>
+    <span class="fail">Failed: 0</span>
+    <span class="skip">Skipped: 25</span>
+  </div>
+  
+  <h2>Test Cases</h2>
+  <div class="test-case pass">
+    <h3>poppies.tif ✅</h3>
+    <div class="image-comparison">
+      <div>
+        <h4>Original (748 KB)</h4>
+        <img src="thumbnails/poppies_orig.png">
+      </div>
+      <div>
+        <h4>Compressed (385 KB, 50% reduction)</h4>
+        <img src="thumbnails/poppies_comp.png">
+      </div>
+      <div>
+        <h4>Difference (exaggerated)</h4>
+        <img src="thumbnails/poppies_diff.png">
+      </div>
+    </div>
+    <table class="metadata-table">
+      <tr><th>Tag</th><th>Original</th><th>Compressed</th><th>Status</th></tr>
+      <tr><td>Dimensions</td><td>512x512</td><td>512x512</td><td>✅</td></tr>
+      <tr><td>Bands</td><td>3</td><td>3</td><td>✅</td></tr>
+      <tr><td>ColorInterp</td><td>RGB</td><td>RGB</td><td>✅</td></tr>
+      <tr><td>Compression</td><td>None</td><td>Zstd</td><td>ℹ️</td></tr>
+    </table>
+  </div>
+  <!-- More test cases... -->
+</body>
+</html>
+```
+
+**Python Script Example:**
+```python
+# tests/generate_thumbnails.py
+from osgeo import gdal
+from PIL import Image
+import json
+
+def create_thumbnail(tiff_path, png_path, size=(256, 256)):
+    """Convert TIFF to PNG thumbnail"""
+    ds = gdal.Open(tiff_path)
+    # Read as RGB array
+    data = ds.ReadAsArray()
+    # Normalize and convert to PIL Image
+    img = Image.fromarray(data.transpose(1, 2, 0))
+    img.thumbnail(size)
+    img.save(png_path)
+
+def create_diff_image(orig_path, comp_path, diff_path):
+    """Create visual difference image"""
+    # Load both images
+    # Calculate absolute difference
+    # Exaggerate for visibility (multiply by 10)
+    # Save as PNG
+```
+
+**Report Features:**
+- [ ] **Thumbnail generation** (256x256 PNG)
+- [ ] **Difference visualization** (highlight changed pixels)
+- [ ] **Metadata comparison table** (tag-by-tag)
+- [ ] **Color-coded pass/fail** (green/red borders)
+- [ ] **File size comparison** (original vs compressed)
+- [ ] **Compression ratio display** (percentage reduction)
+- [ ] **Expandable sections** (click to see full metadata)
+- [ ] **Filter by status** (show only failures)
+- [ ] **Sort options** (by name, size, ratio, status)
+- [ ] **Download report** (ZIP with all thumbnails)
+
+**CI/CD Integration:**
+```yaml
+# .github/workflows/test-report.yml
+- name: Generate HTML Test Report
+  run: |
+    bash tests/run_all_tests.sh
+    python tests/generate_html_report.py
+    
+- name: Upload Test Report
+  uses: actions/upload-artifact@v3
+  with:
+    name: test-report
+    path: tests/report/
+```
+
+**Output Location:**
+```
+tests/report/
+├── index.html           # Main report
+├── thumbnails/
+│   ├── poppies_orig.png
+│   ├── poppies_comp.png
+│   ├── poppies_diff.png
+│   └── ...
+├── metadata/
+│   ├── poppies_orig.json
+│   ├── poppies_comp.json
+│   └── ...
+└── report.json          # Machine-readable summary
+```
+
+---
+
 ### 2. Metadata Validation Testing
 **Status:** ❌ **TODO**
 
