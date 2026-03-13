@@ -205,12 +205,22 @@ pub const COMPRESSION_LERC_ZSTD: u16 = 50004;
 **Test results:** 6/6 files passed (poppies, shapes_lzw, earthlab, flagler, shapes_multi_color, single-channel.ome)
 
 ### 2. Performance Benchmarks
+**Status:** ✅ **COMPLETED**
+
 **Issue:** No performance tracking.
 
-**Solution:**
-- Add benchmark mode with timing
-- Track compression speed (MB/s)
-- Compare different compression levels
+**Solution implemented:**
+- Added `--benchmark` flag to `compress` command
+- Displays timing and throughput metrics after compression:
+  - Original and compressed file sizes
+  - Compression ratio (%)
+  - Time elapsed (seconds)
+  - Throughput (MB/s)
+
+**Usage:**
+```bash
+tiffthin-rs compress input.tif -o output.tif --benchmark
+```
 
 ### 3. Fuzz Testing
 **Issue:** No fuzz testing for malformed TIFF files.
@@ -250,8 +260,9 @@ pub const COMPRESSION_LERC_ZSTD: u16 = 50004;
 ## Version History
 
 - **v0.1.0**: Basic compression, Zstd/LZMA/Deflate, tiled support, colormap preservation
-- **v0.2.0** (Current): Alpha channel, multi-page TIFF, GeoTIFF, ICC, YCbCr, CMYK, OME-XML, visual regression testing
-  - Test results: 27 passed, 0 failed, 29 skipped (out of 56 files)
+- **v0.2.0** (Current): Alpha channel, multi-page TIFF, GeoTIFF, ICC, YCbCr, CMYK, OME-XML, visual regression testing, performance benchmarks
+  - Metadata tests: 27 passed, 0 failed, 29 skipped (out of 56 files)
   - Visual tests: 6/6 passed (pixel statistics match for lossless)
-- **v0.3.0** (Planned): Performance benchmarks, fuzz testing
-- **v0.4.0** (Planned): Additional codec support, SIMD optimizations
+  - Benchmark mode: `--benchmark` flag for timing/throughput metrics
+- **v0.3.0** (Planned): Fuzz testing, SIMD optimizations
+- **v0.4.0** (Planned): Additional codec support (LERC, JPEG-XL)
