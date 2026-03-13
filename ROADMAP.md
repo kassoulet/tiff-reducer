@@ -1,4 +1,4 @@
-# tiffthin-rs Future Implementation Roadmap
+# tiff-reducer Future Implementation Roadmap
 
 This document lists future features and known limitations to address in future releases.
 
@@ -315,7 +315,7 @@ for each test image:
 <!DOCTYPE html>
 <html>
 <head>
-  <title>tiffthin-rs Test Report</title>
+  <title>tiff-reducer Test Report</title>
   <style>
     .test-case { border: 1px solid #ccc; margin: 10px; padding: 10px; }
     .pass { border-left: 5px solid #28a745; }
@@ -545,7 +545,7 @@ test result: ok. 11 passed; 0 failed
 
 **Usage:**
 ```bash
-tiffthin-rs compress input.tif -o output.tif --benchmark
+tiff-reducer compress input.tif -o output.tif --benchmark
 ```
 
 ### 5. SIMD Optimizations
@@ -592,7 +592,7 @@ tiffthin-rs compress input.tif -o output.tif --benchmark
 
 **Usage:**
 ```bash
-tiffthin-rs compress ./input_folder -o ./output --jobs 4
+tiff-reducer compress ./input_folder -o ./output --jobs 4
 ```
 
 ---

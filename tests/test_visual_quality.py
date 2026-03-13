@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Visual Regression Test for tiffthin-rs
+Visual Regression Test for tiff-reducer
 Calculates PSNR and SSIM metrics between original and compressed TIFF files
 """
 
@@ -125,7 +125,7 @@ def compare_tiffs(original_path: str, compressed_path: str) -> dict:
 
 
 def compress_file(input_path: str, output_path: str, tiffthin_path: str) -> bool:
-    """Compress a file using tiffthin-rs."""
+    """Compress a file using tiff-reducer."""
     cmd = [tiffthin_path, "compress", input_path, "-o", output_path]
     result = subprocess.run(cmd, capture_output=True, text=True)
     return result.returncode == 0
@@ -137,14 +137,14 @@ def main():
         sys.exit(1)
     
     input_file = sys.argv[1]
-    tiffthin_bin = sys.argv[2] if len(sys.argv) > 2 else "./target/debug/tiffthin-rs"
+    tiffthin_bin = sys.argv[2] if len(sys.argv) > 2 else "./target/debug/tiff-reducer"
     
     if not os.path.exists(input_file):
         print(f"Error: File not found: {input_file}")
         sys.exit(1)
     
     if not os.path.exists(tiffthin_bin):
-        print(f"Error: tiffthin-rs not found: {tiffthin_bin}")
+        print(f"Error: tiff-reducer not found: {tiffthin_bin}")
         sys.exit(1)
     
     # Create temp output file

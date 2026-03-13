@@ -1,29 +1,33 @@
 #!/bin/bash
-# Comprehensive test script for tiffthin-rs
-# Tests all TIFF images from exampletiffs and libtiff-pics repositories
+# Comprehensive test script for tiff-reducer
+# Tests ALL TIFF images in tests/images directory
 
 # Don't exit on error - we want to run all tests
 # set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-TIFFTHIN="$PROJECT_DIR/target/debug/tiffthin-rs"
+TIFFTHIN="$PROJECT_DIR/target/debug/tiff-reducer"
 
-# Test image repositories
-EXAMPLETIFFS_DIR="$PROJECT_DIR/tests/images/exampletiffs"
-LIBTIFF_PICS_DIR="$PROJECT_DIR/tests/images/libtiff-pics"
-IMAGE_TIFF_DIR="$PROJECT_DIR/tests/images/image-tiff/test_images"
+# Test images directory (flattened structure)
+TEST_IMAGES_DIR="$PROJECT_DIR/tests/images"
 
 # Check if test images exist
-if [ ! -d "$EXAMPLETIFFS_DIR" ] || [ ! -d "$LIBTIFF_PICS_DIR" ]; then
-    echo -e "${RED}Error: Test images not found${NC}"
-    echo "Run: git submodule update --init --recursive"
-    echo "Or download manually from:"
-    echo "  - https://github.com/jeremy-lao/exampletiffs"
-    echo "  - https://github.com/ImageMagick/libtiff-pics"
-    echo "  - https://github.com/image-rs/image-tiff"
+if [ ! -d "$TEST_IMAGES_DIR" ]; then
+    echo -e "${RED}Error: Test images directory not found${NC}"
+    echo "Expected at: $TEST_IMAGES_DIR"
     exit 1
 fi
+
+# Count available test images
+TEST_COUNT=$(find "$TEST_IMAGES_DIR" -maxdepth 1 -name "*.tif*" -type f 2>/dev/null | wc -l)
+if [ "$TEST_COUNT" -eq 0 ]; then
+    echo -e "${RED}Error: No TIFF files found in $TEST_IMAGES_DIR${NC}"
+    exit 1
+fi
+
+echo "Found $TEST_COUNT test images in $TEST_IMAGES_DIR"
+echo ""
 
 # Output directory
 OUTPUT_DIR="/tmp/tiffthin_test_output"
@@ -42,17 +46,17 @@ SKIP=0
 TOTAL=0
 
 # Build if needed
-echo "Building tiffthin-rs..."
+echo "Building tiff-reducer..."
 cd "$PROJECT_DIR" && cargo build --features vendored 2>&1 | grep -v "^warning\|^   Compiling\|^     Finished" || true
 
 if [ ! -f "$TIFFTHIN" ]; then
-    echo -e "${RED}Error: tiffthin-rs not found. Build failed.${NC}"
+    echo -e "${RED}Error: tiff-reducer not found. Build failed.${NC}"
     exit 1
 fi
 
 echo ""
 echo "========================================"
-echo "tiffthin-rs Comprehensive Test Suite"
+echo "tiff-reducer Comprehensive Test Suite"
 echo "========================================"
 echo ""
 
@@ -142,36 +146,14 @@ test_file() {
     PASS=$((PASS + 1))
 }
 
-# Find and test all TIFF files
-echo "Scanning for TIFF files..."
+# Find and test all TIFF files in tests/images directory
+echo "Scanning for TIFF files in $TEST_IMAGES_DIR..."
 echo ""
 
-# Test exampletiffs
-if [ -d "$EXAMPLETIFFS_DIR" ]; then
-    echo "--- exampletiffs ---"
-    while IFS= read -r -d '' file; do
-        test_file "$file"
-    done < <(find "$EXAMPLETIFFS_DIR" -maxdepth 1 -name "*.tif*" -type f -print0 2>/dev/null | sort -z)
-    echo ""
-fi
-
-# Test libtiff-pics
-if [ -d "$LIBTIFF_PICS_DIR" ]; then
-    echo "--- libtiff-pics ---"
-    while IFS= read -r -d '' file; do
-        test_file "$file"
-    done < <(find "$LIBTIFF_PICS_DIR" -maxdepth 1 -name "*.tif*" -type f -print0 2>/dev/null | sort -z)
-    echo ""
-fi
-
-# Test image-tiff
-if [ -d "$IMAGE_TIFF_DIR" ]; then
-    echo "--- image-tiff ---"
-    while IFS= read -r -d '' file; do
-        test_file "$file"
-    done < <(find "$IMAGE_TIFF_DIR" -maxdepth 1 -name "*.tif*" -type f -print0 2>/dev/null | sort -z)
-    echo ""
-fi
+# Test all files
+while IFS= read -r -d '' file; do
+    test_file "$file"
+done < <(find "$TEST_IMAGES_DIR" -maxdepth 1 -name "*.tif*" -type f -print0 2>/dev/null | sort -z)
 
 # Summary
 echo "========================================"

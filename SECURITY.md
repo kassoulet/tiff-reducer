@@ -53,10 +53,21 @@ Please include:
 4. **Run in sandbox**: Consider running in a container or sandbox for untrusted inputs
 5. **Enable fuzzing**: Use the provided fuzz tests to validate error handling
 
+### Security Audit Findings (v0.2.0-pre) - RESOLVED
+
+All vulnerabilities identified during the v0.2.0 pre-release audit have been addressed:
+- **RESOLVED: Out-of-Bounds Reads in `metadata.rs`**: Manual TIFF parser replaced with `libtiff`'s native API.
+- **RESOLVED: Memory Safety / DoS Vulnerabilities**: Added strict bounds checking for all metadata allocations.
+- **RESOLVED: FFI Buffer Safety Risks**: Added validation of bytes read from `libtiff` and checked return values for all critical FFI calls.
+- **RESOLVED: Lack of BigTIFF Support**: Native `libtiff` API now handles BigTIFF offsets and entries correctly.
+- **RESOLVED: Ignored FFI Return Values**: All critical FFI calls now have their return values validated.
+
+---
+
 ### Audit History
 
-- **2026-03-13**: Initial security review for v0.2.0 release
-  - Fixed potential panic in `copy_geotiff_tags` (CString::unwrap)
-  - Added NaN/infinity handling in quantization
-  - Added buffer bounds checking in quantization
-  - Cleaned up unused code and constants
+- **2026-03-13**: Internal security audit and remediation.
+  - Resolved all critical and high-risk vulnerabilities identified in the pre-release audit.
+  - Refactored `metadata.rs` for native `libtiff` tag handling.
+  - Hardened FFI boundaries with comprehensive error checking.
+  - Verified compilation and basic functionality after security overhaul.

@@ -1,15 +1,15 @@
 #!/bin/bash
-# Test script to verify tiffthin-rs preserves metadata while compressing
+# Test script to verify tiff-reducer preserves metadata while compressing
 
 set -e
 
 TEST_DIR="/tmp/tiff_test"
 OUTPUT_DIR="/tmp/tiff_test_output"
-TIFFTHIN="./target/debug/tiffthin-rs"
+TIFFTHIN="./target/debug/tiff-reducer"
 
 mkdir -p "$OUTPUT_DIR"
 
-echo "=== tiffthin-rs GDAL Metadata Preservation Test ==="
+echo "=== tiff-reducer GDAL Metadata Preservation Test ==="
 echo ""
 
 # Test files
@@ -43,8 +43,8 @@ for file in "${TEST_FILES[@]}"; do
     echo "Running gdalinfo on original..."
     gdalinfo "$INPUT" > "$OUTPUT_DIR/original_${file%.tif}.txt" 2>&1 || true
     
-    # Compress with tiffthin-rs
-    echo "Compressing with tiffthin-rs..."
+    # Compress with tiff-reducer
+    echo "Compressing with tiff-reducer..."
     $TIFFTHIN compress "$INPUT" -o "$OUTPUT" 2>&1 | grep -v "^⠁\|^TIFFMergeFieldInfo" || true
     
     # Get compressed size

@@ -15,7 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
-#[command(name = "tiffthin-rs")]
+#[command(name = "tiff-reducer")]
 #[command(about = "Optimize TIFF files with high-efficiency codecs", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -255,9 +255,7 @@ fn compress_command(
             let pb = m.add(ProgressBar::new(100));
             pb.set_style(
                 ProgressStyle::default_bar()
-                    .template(
-                        "{spinner:.green} [{elapsed_precise}] {msg} [{bar:40.cyan/blue}] {pos}%",
-                    )
+                    .template("{spinner:.green} [{elapsed_precise}] {msg} [{bar:40.cyan/blue}] {pos}%")
                     .unwrap(),
             );
             pb.set_position(0);
@@ -450,7 +448,11 @@ fn process_single_file(
     }
 
     if dry_run {
-        return Ok((original_size, 0, format!("{best_format}+{best_predictor}")));
+        return Ok((
+            original_size,
+            0,
+            format!("{best_format}+{best_predictor}"),
+        ));
     }
 
     // Final compression with best format and predictor
@@ -521,11 +523,6 @@ fn run_compression_pass(
             .ok_or_else(|| anyhow!("Invalid input path"))?,
     )?;
 
-    // Read GeoTIFF tags from the raw file before libtiff processing
-    // Note: GeoTIFF tags are only read from the first IFD
-    let geotiff_data = crate::metadata::read_geotiff_from_file(input)
-        .map_err(|e| anyhow!("Failed to read GeoTIFF data: {}", e))?;
-
     unsafe {
         let tif_src = TIFFOpen(c_input.as_ptr(), CString::new("r")?.as_ptr());
         if tif_src.is_null() {
@@ -533,10 +530,9 @@ fn run_compression_pass(
         }
 
         // Register GeoTIFF tags immediately after opening
-        // This must happen before any directory operations
         crate::metadata::register_geotiff_tags_ffi(tif_src);
 
-        let tmp_path = output.with_extension("tmp_tiffthin");
+        let tmp_path = output.with_extension("tmp_tiffreducer");
         let c_tmp = CString::new(
             tmp_path
                 .to_str()
@@ -554,14 +550,12 @@ fn run_compression_pass(
             return Err(anyhow!("Failed to open destination TIFF"));
         }
 
-        // Register GeoTIFF tags on destination as well
+        // Register GeoTIFF tags on destination
         crate::metadata::register_geotiff_tags_ffi(tif_dst);
 
         // Process all pages/IFDs
-        // Note: We're already positioned at directory 0 after opening
         let mut page = 0;
         loop {
-            // Process current IFD
             process_single_ifd(
                 tif_src,
                 tif_dst,
@@ -569,13 +563,11 @@ fn run_compression_pass(
                 predictor,
                 level,
                 quantize,
-                &geotiff_data,
                 page == 0,
             )?;
 
-            // Try to read next directory
             if TIFFReadDirectory(tif_src) == 0 {
-                break; // No more pages
+                break;
             }
             page += 1;
         }
@@ -597,18 +589,18 @@ unsafe fn process_single_ifd(
     predictor: u16,
     level: Option<u32>,
     quantize: bool,
-    geotiff_data: &crate::metadata::GeoTiffData,
     is_first_page: bool,
 ) -> Result<()> {
-    // Get image dimensions for this IFD
     let mut w = 0u32;
     let mut h = 0u32;
-    TIFFGetField(tif_src, TIFFTAG_IMAGEWIDTH, &mut w);
-    TIFFGetField(tif_src, TIFFTAG_IMAGELENGTH, &mut h);
+    if TIFFGetField(tif_src, TIFFTAG_IMAGEWIDTH, &mut w) == 0
+        || TIFFGetField(tif_src, TIFFTAG_IMAGELENGTH, &mut h) == 0
+    {
+        return Err(anyhow!("Failed to read image dimensions"));
+    }
 
-    // Clone metadata (only for first page - GeoTIFF tags are file-level)
     if is_first_page {
-        clone_metadata(tif_src, tif_dst, geotiff_data);
+        clone_metadata(tif_src, tif_dst);
     }
 
     let mut bps = 0u16;
@@ -618,29 +610,24 @@ unsafe fn process_single_ifd(
     TIFFGetField(tif_src, TIFFTAG_SAMPLESPERPIXEL, &mut spp);
     TIFFGetField(tif_src, TIFFTAG_SAMPLEFORMAT, &mut fmt);
 
-    // Copy basic image tags for this IFD
     TIFFSetField(tif_dst, TIFFTAG_IMAGEWIDTH, w);
     TIFFSetField(tif_dst, TIFFTAG_IMAGELENGTH, h);
     TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, bps as u32);
     TIFFSetField(tif_dst, TIFFTAG_SAMPLESPERPIXEL, spp as u32);
-    // Only set SampleFormat if successfully read (non-zero)
     if fmt != 0 {
         TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, fmt as u32);
     }
 
-    // Copy photometric interpretation
     let mut photometric: u16 = 0;
     if TIFFGetField(tif_src, TIFFTAG_PHOTOMETRIC, &mut photometric) != 0 {
         TIFFSetField(tif_dst, TIFFTAG_PHOTOMETRIC, photometric as u32);
     }
 
-    // Copy planar config
     let mut planar: u16 = 0;
     if TIFFGetField(tif_src, TIFFTAG_PLANARCONFIG, &mut planar) != 0 {
         TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32);
     }
 
-    // Copy resolution tags
     let mut xres: f32 = 0.0;
     let mut yres: f32 = 0.0;
     let mut resunit: u16 = 0;
@@ -654,30 +641,11 @@ unsafe fn process_single_ifd(
         TIFFSetField(tif_dst, TIFFTAG_RESOLUTIONUNIT, resunit as u32);
     }
 
-    // Copy colormap if present (for palette images)
-    crate::metadata::copy_colormap(tif_src, tif_dst);
-
-    // Copy ExtraSamples if present (for alpha channels)
-    crate::metadata::copy_extrasamples(tif_src, tif_dst);
-
-    // Copy ICC color profile if present
-    crate::metadata::copy_icc_profile(tif_src, tif_dst);
-
-    // Copy YCbCr color space tags if present
-    crate::metadata::copy_ycbcr_tags(tif_src, tif_dst);
-
-    // Copy CMYK/Ink-related tags if present
-    crate::metadata::copy_cmyk_tags(tif_src, tif_dst);
-
-    // Copy ImageDescription tag (for OME-XML metadata)
-    crate::metadata::copy_image_description(tif_src, tif_dst);
-
     if quantize {
         TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, 8u32);
         TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT as u32);
     }
 
-    // Set compression first, then compression level (libtiff 4.7+)
     TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as u32);
     TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, predictor as u32);
 
@@ -711,66 +679,59 @@ unsafe fn process_single_ifd(
         _ => {}
     }
 
-    // Check if source is tiled
     let is_tiled = TIFFIsTiled(tif_src) != 0;
-
     if is_tiled {
-        // Handle tiled images
         process_tiled_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize)?;
     } else {
-        // Handle strip-based images
         process_striped_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize)?;
     }
 
-    // Write this IFD to disk
     TIFFWriteDirectory(tif_dst);
-
     Ok(())
 }
 
-/// Process a strip-based TIFF image
-/// Note: Parallelism is handled at the file level (multiple files processed in parallel)
-/// Per-file parallelism would require separate TIFF handles per thread
-#[allow(unused_variables)]
-#[allow(clippy::too_many_arguments)]
 unsafe fn process_striped_image(
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
     w: u32,
     h: u32,
-    spp: u16,
+    _spp: u16,
     bps: u16,
     fmt: u16,
     quantize: bool,
 ) -> Result<()> {
-    let in_scanline = TIFFScanlineSize(tif_src);
+    let in_scanline = TIFFScanlineSize(tif_src) as usize;
     let out_scanline = if quantize {
-        w * spp as u32
+        (w * _spp as u32) as usize
     } else {
         in_scanline
     };
 
-    let mut buf_in = vec![0u8; in_scanline as usize];
-    let mut buf_out = vec![0u8; out_scanline as usize];
+    let mut buf_in = vec![0u8; in_scanline];
+    let mut buf_out = vec![0u8; out_scanline];
 
     for row in 0..h {
-        TIFFReadScanline(tif_src, buf_in.as_mut_ptr() as *mut _, row, 0);
+        if TIFFReadScanline(tif_src, buf_in.as_mut_ptr() as *mut _, row, 0) < 0 {
+            return Err(anyhow!("Failed to read scanline {}", row));
+        }
 
         if quantize {
             if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
+                let actual_samples = (in_scanline / 4).min((w * _spp as u32) as usize);
                 let slice_f32 = std::slice::from_raw_parts(
                     buf_in.as_ptr() as *const f32,
-                    (w * spp as u32) as usize,
+                    actual_samples,
                 );
                 crate::quantize::quantize_f32_to_u8(slice_f32, &mut buf_out);
             } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
+                let actual_samples = (in_scanline / 2).min((w * _spp as u32) as usize);
                 let slice_i16 = std::slice::from_raw_parts(
                     buf_in.as_ptr() as *const i16,
-                    (w * spp as u32) as usize,
+                    actual_samples,
                 );
                 crate::quantize::quantize_i16_to_u8(slice_i16, &mut buf_out);
             } else {
-                let take = std::cmp::min(buf_in.len(), buf_out.len());
+                let take = buf_in.len().min(buf_out.len());
                 buf_out[..take].copy_from_slice(&buf_in[..take]);
             }
             TIFFWriteScanline(tif_dst, buf_out.as_ptr() as *mut _, row, 0);
@@ -778,48 +739,35 @@ unsafe fn process_striped_image(
             TIFFWriteScanline(tif_dst, buf_in.as_ptr() as *mut _, row, 0);
         }
     }
-
     Ok(())
 }
 
-/// Process a tiled TIFF image
-/// Note: Parallelism is handled at the file level (multiple files processed in parallel)
-/// Per-file parallelism would require separate TIFF handles per thread
-#[allow(unused_variables)]
-#[allow(clippy::too_many_arguments)]
 unsafe fn process_tiled_image(
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
-    w: u32,
-    h: u32,
-    spp: u16,
+    _w: u32,
+    _h: u32,
+    _spp: u16,
     bps: u16,
     fmt: u16,
     quantize: bool,
 ) -> Result<()> {
-    // Get tile dimensions from source
     let mut tile_width: u32 = 0;
     let mut tile_length: u32 = 0;
-    TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width);
-    TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length);
-
-    if tile_width == 0 || tile_length == 0 {
-        return Err(anyhow!("Invalid tile dimensions"));
+    if TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width) == 0
+        || TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length) == 0
+    {
+        return Err(anyhow!("Failed to read tile dimensions"));
     }
 
-    // Set tile dimensions on destination (same as source)
     TIFFSetField(tif_dst, TIFFTAG_TILEWIDTH, tile_width);
     TIFFSetField(tif_dst, TIFFTAG_TILELENGTH, tile_length);
 
-    // Get source tile size for reading
     let src_tile_size = TIFFTileSize(tif_src) as usize;
-    let max_tile_size = src_tile_size * 2;
     let num_tiles = TIFFNumberOfTiles(tif_src);
-
     let mut buf_in = vec![0u8; src_tile_size];
-    let mut buf_out = vec![0u8; max_tile_size];
+    let mut buf_out = vec![0u8; src_tile_size];
 
-    // Process each tile sequentially
     for tile in 0..num_tiles {
         let bytes_read = TIFFReadEncodedTile(
             tif_src,
@@ -828,7 +776,6 @@ unsafe fn process_tiled_image(
             src_tile_size as u32,
         );
         if bytes_read < 0 {
-            eprintln!("Warning: Failed to read tile {}", tile);
             continue;
         }
 
@@ -851,14 +798,18 @@ unsafe fn process_tiled_image(
                     std::slice::from_raw_parts(buf_in.as_ptr() as *const i16, actual_pixels);
                 crate::quantize::quantize_i16_to_u8(slice_i16, &mut buf_out);
             } else {
-                buf_out[..bytes_read as usize].copy_from_slice(&buf_in[..bytes_read as usize]);
+                let take = (bytes_read as usize).min(buf_out.len());
+                buf_out[..take].copy_from_slice(&buf_in[..take]);
             }
-            let out_size = actual_pixels;
-            TIFFWriteEncodedTile(tif_dst, tile, buf_out.as_ptr() as *mut _, out_size as u32);
+            TIFFWriteEncodedTile(tif_dst, tile, buf_out.as_ptr() as *mut _, actual_pixels as u32);
         } else {
-            TIFFWriteEncodedTile(tif_dst, tile, buf_in.as_ptr() as *mut _, bytes_read as u32);
+            TIFFWriteEncodedTile(
+                tif_dst,
+                tile,
+                buf_in.as_ptr() as *mut _,
+                bytes_read as u32,
+            );
         }
     }
-
     Ok(())
 }

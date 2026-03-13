@@ -1,4 +1,4 @@
-# TiffThin-RS 🐘
+# tiff-reducer 🐘
 
 A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency codecs (Zstd/LZMA/LERC) while strictly preserving all metadata (GeoTIFF, ICC, OME-XML, etc.).
 
@@ -57,11 +57,11 @@ cargo build --release
 Produces a musl-linked binary for any Linux environment.
 
 ```bash
-docker build -t tiffthin-builder .
+docker build -t tiff-reducer-builder .
 # Extract the binary
-docker create --name temp-tiffthin tiffthin-builder
-docker cp temp-tiffthin:/tiffthin-rs ./tiffthin-rs
-docker rm temp-tiffthin
+docker create --name temp-tiff-reducer tiff-reducer-builder
+docker cp temp-tiff-reducer:/tiff-reducer ./tiff-reducer
+docker rm temp-tiff-reducer
 ```
 
 ### Vendored Build (Statically linked compression libraries)
@@ -93,94 +93,71 @@ For a **fully static binary** (no glibc dependency), use the Docker build or com
 
 ### Development Build (with Test Images)
 
-This project uses git submodules for test images. To clone with test images:
+Test images are included locally in `tests/images/` directory (304 TIFF files).
 
+To run tests:
 ```bash
-# Clone with submodules
-git clone --recurse-submodules https://github.com/youruser/tiffthin-rs.git
+# Run comprehensive test suite
+bash tests/run_all_tests.sh
 
-# Or initialize submodules after cloning
-git clone https://github.com/youruser/tiffthin-rs.git
-cd tiffthin-rs
-git submodule update --init --recursive
+# Run visual regression tests
+bash tests/test_visual_regression.sh
+
+# Run fuzz tests
+bash tests/fuzz_test.sh
+
+# Run Rust integration tests
+cargo test --test integration_tests
 ```
 
-**Test images location:** `tests/images/`
-- `tests/images/exampletiffs/` - Test images from exampletiffs repository
-- `tests/images/libtiff-pics/` - Test images from libtiff-pics repository
-- `tests/images/image-tiff/` - Test images from image-tiff crate repository
-
-**Manual setup (if submodules fail):**
-```bash
-# Create test images directory
-mkdir -p tests/images
-
-# Download test images manually (choose one or more)
-cd tests/images
-
-# Option 1: exampletiffs
-git clone https://github.com/jeremy-lao/exampletiffs.git
-
-# Option 2: libtiff-pics  
-git clone https://github.com/ImageMagick/libtiff-pics.git
-
-# Option 3: image-tiff test images
-git clone https://github.com/image-rs/image-tiff.git
-# Test images are in: image-tiff/test_images/
-
-cd ../..
-```
-
-**Note:** If you encounter authentication issues with GitHub, you may need to:
-1. Set up SSH keys: `ssh-keygen` and add to GitHub
-2. Or use HTTPS with a personal access token
-3. Or use the automated download script:
-   ```bash
-   bash scripts/download_test_images.sh
-   ```
-4. Or download repositories as ZIP files from GitHub and extract
+**Note:** Test images include various formats:
+- Standard TIFF files (RGB, grayscale, palette)
+- Multi-page TIFF files
+- OME-TIFF files (microscopy data)
+- GeoTIFF files (geospatial data)
+- Various compression formats (LZW, Deflate, JPEG, etc.)
 
 ## Usage
 
 ### Compress a file (Overwrites by default)
 ```bash
-tiffthin-rs compress image.tif
+tiff-reducer compress image.tif
 ```
 
 ### With specific format and level
 ```bash
-tiffthin-rs compress input.tif --output optimized.tif --format zstd --level 22
+tiff-reducer compress input.tif --output optimized.tif --format zstd --level 22
 ```
 
 ### Extreme Optimization with Quantization
 ```bash
-tiffthin-rs compress input.tif --output optimized.tif --extreme --quantize
+tiff-reducer compress input.tif --output optimized.tif --extreme --quantize
 ```
 
 ### Benchmark Mode (timing and throughput)
 ```bash
-tiffthin-rs compress input.tif --output optimized.tif --benchmark
+tiff-reducer compress input.tif --output optimized.tif --benchmark
 ```
 
 ### Control Parallelism (default: number of CPUs)
 ```bash
-tiffthin-rs compress ./input_folder --output ./output_folder --jobs 4
+tiff-reducer compress ./input_folder --output ./output_folder --jobs 4
 ```
 
 ### LERC Compression (for scientific data)
 ```bash
-tiffthin-rs compress input.tif --output optimized.tif --format lerc
-tiffthin-rs compress input.tif --output optimized.tif --format lerc-zstd
+tiff-reducer compress input.tif --output optimized.tif --format lerc
+tiff-reducer compress input.tif --output optimized.tif --format lerc-zstd
 ```
 
 ### Analyze Metadata
 ```bash
-tiffthin-rs analyze image.tif
+tiff-reducer analyze image.tif
 ```
 
 ### Process a directory
 ```bash
-tiffthin-rs compress ./input_folder --output ./output_folder --extreme
+tiff-reducer compress ./input_folder --output ./output_folder --extreme
 ```
 
 ## Subcommands & Options
