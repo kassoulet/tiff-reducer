@@ -125,3 +125,21 @@ pub const SAMPLEFORMAT_UINT: u16 = 1;
 pub const SAMPLEFORMAT_INT: u16 = 2;
 pub const SAMPLEFORMAT_IEEEFP: u16 = 3;
 pub const SAMPLEFORMAT_VOID: u16 = 4;
+
+// Photometric interpretation values
+pub const PHOTOMETRIC_MINISWHITE: u16 = 0;
+pub const PHOTOMETRIC_MINISBLACK: u16 = 1;
+pub const PHOTOMETRIC_RGB: u16 = 2;
+pub const PHOTOMETRIC_PALETTE: u16 = 3;
+pub const PHOTOMETRIC_MASK: u16 = 4;
+pub const PHOTOMETRIC_SEPARATED: u16 = 5;  // CMYK
+pub const PHOTOMETRIC_YCBCR: u16 = 6;
+
+// YCbCr tags
+pub const TIFFTAG_YCBCRSUBSAMPLING: u32 = 530;
+pub const TIFFTAG_YCBCRPOSITION: u32 = 531;
+pub const TIFFTAG_YCBCRCOEFFICIENTS: u32 = 532;
+
+// ReferenceWhite values
+pub const YCBCRPOSITION_CENTERED: u16 = 1;
+pub const YCBCRPOSITION_COSITED: u16 = 2;
