@@ -249,11 +249,9 @@ pub const COMPRESSION_JPEGXL: u16 = 50005;
 ## Testing Improvements
 
 ### 1. Visual Regression Testing
-**Status:** ✅ **COMPLETED**
+**Status:** ⚠️ **PARTIAL** - Basic implementation exists, comprehensive testing needed
 
-**Issue:** Current tests only check metadata, not pixel values.
-
-**Solution implemented:**
+**Current implementation:**
 - Created `tests/test_visual_regression.sh` - bash-based statistical comparison
 - Created `tests/test_visual_quality.py` - Python script with PSNR/SSIM metrics
 - Compares GDAL statistics (min/max/mean) between original and compressed files
@@ -262,7 +260,124 @@ pub const COMPRESSION_JPEGXL: u16 = 50005;
 
 **Test results:** 6/6 files passed (poppies, shapes_lzw, earthlab, flagler, shapes_multi_color, single-channel.ome)
 
-### 2. Performance Benchmarks
+**Limitations:**
+- ❌ Only tests 6 files manually specified
+- ❌ Statistics comparison (min/max/mean) is not pixel-perfect validation
+- ❌ No automated integration with main test suite
+- ❌ No visual diff output for debugging
+
+**Future Enhancements (v0.3.0):**
+- [ ] **Pixel-by-pixel comparison** using GDAL for all test images
+  - Compare each pixel value between original and compressed
+  - Allow tolerance for lossy compression (JPEG, WebP)
+  - Generate diff images for visual inspection
+- [ ] **Run on all 56 test images** automatically
+- [ ] **Integration with CI/CD** - fail on pixel mismatch for lossless
+- [ ] **SSIM/PSNR reporting** for quality tracking over time
+- [ ] **HTML test reports** with visual comparisons
+
+---
+
+### 2. Metadata Validation Testing
+**Status:** ❌ **TODO**
+
+**Issue:** Current tests check dimensions and band count, but not all metadata tags.
+
+**Required Validation (v0.3.0):**
+- [ ] **GeoTIFF tags preservation**
+  - ModelPixelScaleTag (33550)
+  - ModelTiepointTag (33922)
+  - GeoKeyDirectoryTag (34735)
+  - GeoDoubleParamsTag (34736)
+  - GeoAsciiParamsTag (34737)
+- [ ] **Color profile preservation**
+  - ICC Profile (34675)
+  - Color interpretation (Red, Green, Blue, Alpha, Palette)
+- [ ] **Image structure preservation**
+  - BitsPerSample
+  - SampleFormat (uint, int, float)
+  - PlanarConfiguration
+  - Resolution tags
+- [ ] **ExtraSamples/Alpha channel**
+  - Verify alpha channel is preserved correctly
+- [ ] **Multi-page/OME-TIFF metadata**
+  - Page count matches
+  - OME-XML block preserved
+  - ImageDescription tag
+
+**Implementation Plan:**
+```bash
+# Proposed test script: tests/test_metadata_validation.sh
+for each test image:
+  1. Extract all tags from original (gdalinfo -json)
+  2. Extract all tags from compressed (gdalinfo -json)
+  3. Compare tag-by-tag
+  4. Report mismatches
+  5. Fail on critical tag mismatch
+```
+
+---
+
+### 3. Test Framework Improvements
+**Status:** ❌ **TODO**
+
+**Issue:** Current test infrastructure is bash-based and lacks structure.
+
+**Proposed Solution (v0.3.0):**
+
+**Option A: Rust Integration Tests (Recommended)**
+```rust
+// tests/integration_tests.rs
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_lossless_compression_preserves_pixels() {
+        // Compare original vs compressed pixel-by-pixel
+    }
+    
+    #[test]
+    fn test_metadata_preservation() {
+        // Compare all metadata tags
+    }
+    
+    #[test]
+    fn test_multi_page_tiff() {
+        // Verify all pages are preserved
+    }
+}
+```
+
+**Option B: Python pytest Framework**
+```python
+# tests/test_compression.py
+def test_pixel_perfect_compression():
+    """Verify lossless compression preserves all pixels"""
+    
+def test_metadata_unchanged():
+    """Verify all metadata tags are preserved"""
+    
+def test_geotiff_tags():
+    """Verify GeoTIFF metadata is preserved"""
+```
+
+**Required Features:**
+- [ ] **Automated test discovery** - find all TIFF files in test directory
+- [ ] **Parametrized tests** - run same test on multiple files
+- [ ] **Fixture support** - setup/teardown for test files
+- [ ] **Detailed failure reports** - show exactly what changed
+- [ ] **CI/CD integration** - GitHub Actions, GitLab CI
+- [ ] **Code coverage** - track which code paths are tested
+- [ ] **Performance regression tests** - track compression speed over time
+
+**Migration Plan:**
+1. Keep existing bash tests for backward compatibility
+2. Add new Rust/Python tests alongside
+3. Gradually migrate critical tests to new framework
+4. Integrate with `cargo test` for unified test running
+
+---
+
+### 4. Performance Benchmarks
 **Status:** ✅ **COMPLETED**
 
 **Issue:** No performance tracking.
@@ -280,7 +395,7 @@ pub const COMPRESSION_JPEGXL: u16 = 50005;
 tiffthin-rs compress input.tif -o output.tif --benchmark
 ```
 
-### 3. SIMD Optimizations
+### 5. SIMD Optimizations
 **Status:** ✅ **COMPLETED**
 
 **Issue:** Vendored libraries not using SIMD instructions.
@@ -294,7 +409,7 @@ tiffthin-rs compress input.tif -o output.tif --benchmark
 
 ---
 
-### 4. Fuzz Testing
+### 6. Fuzz Testing
 **Status:** ✅ **COMPLETED**
 
 **Issue:** No fuzz testing for malformed TIFF files.
@@ -312,7 +427,7 @@ tiffthin-rs compress input.tif -o output.tif --benchmark
 
 ---
 
-### 5. Advanced Parallelism
+### 7. Advanced Parallelism
 **Status:** ✅ **COMPLETED**
 
 **Issue:** Limited control over parallel processing.
@@ -359,7 +474,7 @@ tiffthin-rs compress ./input_folder -o ./output --jobs 4
 
 - **v0.1.0**: Basic compression, Zstd/LZMA/Deflate, tiled support, colormap preservation
 - **v0.2.0** (Current): Alpha channel, multi-page TIFF, GeoTIFF, ICC, YCbCr, CMYK, OME-XML, visual regression testing, performance benchmarks, fuzz testing, SIMD optimizations, LERC/JPEG-XL codecs, advanced parallelism
-  - Metadata tests: 27 passed, 0 failed, 29 skipped (out of 56 files)
+  - Metadata tests: 31 passed, 0 failed, 25 skipped (out of 56 files)
   - Visual tests: 6/6 passed (pixel statistics match for lossless)
   - Fuzz tests: 16/18 passed (error handling validated)
   - Benchmark mode: `--benchmark` flag for timing/throughput metrics
@@ -367,4 +482,10 @@ tiffthin-rs compress ./input_folder -o ./output --jobs 4
   - LERC codec: Limited Error Raster Compression for scientific data
   - JPEG-XL codec: Modern high-efficiency compression
   - Parallelism: `--jobs` flag for controlling file-level parallelism
-- **v0.3.0** (Planned): BigTIFF full support, GPU acceleration
+- **v0.3.0** (Planned): Comprehensive test framework, pixel-perfect validation, metadata validation
+  - [ ] Pixel-by-pixel comparison using GDAL for all 56 test images
+  - [ ] Metadata tag-by-tag validation (GeoTIFF, ICC, ExtraSamples)
+  - [ ] Rust integration tests or Python pytest framework
+  - [ ] CI/CD integration with automated test reports
+  - [ ] HTML visual diff reports for debugging
+  - [ ] Code coverage tracking
