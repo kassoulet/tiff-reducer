@@ -12,6 +12,7 @@ TIFFTHIN="$PROJECT_DIR/target/debug/tiffthin-rs"
 # Test image repositories
 EXAMPLETIFFS_DIR="$PROJECT_DIR/tests/images/exampletiffs"
 LIBTIFF_PICS_DIR="$PROJECT_DIR/tests/images/libtiff-pics"
+IMAGE_TIFF_DIR="$PROJECT_DIR/tests/images/image-tiff/test_images"
 
 # Check if test images exist
 if [ ! -d "$EXAMPLETIFFS_DIR" ] || [ ! -d "$LIBTIFF_PICS_DIR" ]; then
@@ -20,6 +21,7 @@ if [ ! -d "$EXAMPLETIFFS_DIR" ] || [ ! -d "$LIBTIFF_PICS_DIR" ]; then
     echo "Or download manually from:"
     echo "  - https://github.com/jeremy-lao/exampletiffs"
     echo "  - https://github.com/ImageMagick/libtiff-pics"
+    echo "  - https://github.com/image-rs/image-tiff"
     exit 1
 fi
 
@@ -166,6 +168,15 @@ if [ -d "$LIBTIFF_PICS_DIR" ]; then
     while IFS= read -r -d '' file; do
         test_file "$file"
     done < <(find "$LIBTIFF_PICS_DIR" -maxdepth 1 -name "*.tif*" -type f -print0 2>/dev/null | sort -z)
+    echo ""
+fi
+
+# Test image-tiff
+if [ -d "$IMAGE_TIFF_DIR" ]; then
+    echo "--- image-tiff ---"
+    while IFS= read -r -d '' file; do
+        test_file "$file"
+    done < <(find "$IMAGE_TIFF_DIR" -maxdepth 1 -name "*.tif*" -type f -print0 2>/dev/null | sort -z)
     echo ""
 fi
 
