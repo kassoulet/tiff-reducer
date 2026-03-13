@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 use crate::ffi::*;
 use libc::c_char;
 use std::fs::File;
@@ -42,10 +44,16 @@ pub fn read_geotiff_from_file(path: &std::path::Path) -> std::io::Result<GeoTiff
 
     let (little_endian, ifd_offset) = if header[0] == 0x49 && header[1] == 0x49 {
         // Little endian (II)
-        (true, u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as u64)
+        (
+            true,
+            u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as u64,
+        )
     } else if header[0] == 0x4D && header[1] == 0x4D {
         // Big endian (MM)
-        (false, u32::from_be_bytes([header[4], header[5], header[6], header[7]]) as u64)
+        (
+            false,
+            u32::from_be_bytes([header[4], header[5], header[6], header[7]]) as u64,
+        )
     } else {
         return Ok(result); // Not a valid TIFF file
     };
@@ -272,8 +280,21 @@ pub unsafe fn copy_ycbcr_tags(src: *mut TIFF, dst: *mut TIFF) {
     let mut coeff_r: f32 = 0.0;
     let mut coeff_g: f32 = 0.0;
     let mut coeff_b: f32 = 0.0;
-    if TIFFGetField(src, TIFFTAG_YCBCRCOEFFICIENTS, &mut coeff_r, &mut coeff_g, &mut coeff_b) != 0 {
-        TIFFSetField(dst, TIFFTAG_YCBCRCOEFFICIENTS, coeff_r as f64, coeff_g as f64, coeff_b as f64);
+    if TIFFGetField(
+        src,
+        TIFFTAG_YCBCRCOEFFICIENTS,
+        &mut coeff_r,
+        &mut coeff_g,
+        &mut coeff_b,
+    ) != 0
+    {
+        TIFFSetField(
+            dst,
+            TIFFTAG_YCBCRCOEFFICIENTS,
+            coeff_r as f64,
+            coeff_g as f64,
+            coeff_b as f64,
+        );
     }
 }
 
@@ -331,11 +352,11 @@ unsafe fn register_geotiff_tags(tif: *mut TIFF) {
     let geotiff_field_info: [TIFFFieldInfo; 5] = [
         TIFFFieldInfo {
             field_tag: TIFFTAG_MODELPIXELSCALETAG,
-            field_readcount: -2,  // VARIABLE2 - array with count passed
+            field_readcount: -2, // VARIABLE2 - array with count passed
             field_writecount: -2,
             field_type: TIFF_TYPE_DOUBLE,
             field_oktochange: 1,
-            field_passcount: 1,  // count is passed
+            field_passcount: 1, // count is passed
             field_name: MODELPIXELSCALE_NAME.as_ptr() as *const c_char,
         },
         TIFFFieldInfo {
@@ -367,7 +388,7 @@ unsafe fn register_geotiff_tags(tif: *mut TIFF) {
         },
         TIFFFieldInfo {
             field_tag: TIFFTAG_GEOASCIIPARAMSTAG,
-            field_readcount: -1,  // VARIABLE - null-terminated string
+            field_readcount: -1, // VARIABLE - null-terminated string
             field_writecount: -1,
             field_type: TIFF_TYPE_ASCII,
             field_oktochange: 1,
@@ -403,22 +424,42 @@ unsafe fn copy_tag_float(src: *mut TIFF, dst: *mut TIFF, tag: u32) {
 unsafe fn copy_geotiff_tags(_src: *mut TIFF, dst: *mut TIFF, geotiff_data: &GeoTiffData) {
     // ModelPixelScaleTag (33550) - array of doubles
     if let Some(ref data) = geotiff_data.model_pixel_scale {
-        TIFFSetField(dst, TIFFTAG_MODELPIXELSCALETAG, data.len() as u32, data.as_ptr());
+        TIFFSetField(
+            dst,
+            TIFFTAG_MODELPIXELSCALETAG,
+            data.len() as u32,
+            data.as_ptr(),
+        );
     }
 
     // ModelTiepointTag (33922) - array of doubles
     if let Some(ref data) = geotiff_data.model_tiepoint {
-        TIFFSetField(dst, TIFFTAG_MODELTIEPOINTTAG, data.len() as u32, data.as_ptr());
+        TIFFSetField(
+            dst,
+            TIFFTAG_MODELTIEPOINTTAG,
+            data.len() as u32,
+            data.as_ptr(),
+        );
     }
 
     // GeoKeyDirectoryTag (34735) - array of shorts
     if let Some(ref data) = geotiff_data.geokey_directory {
-        TIFFSetField(dst, TIFFTAG_GEOKEYDIRECTORYTAG, data.len() as u32, data.as_ptr());
+        TIFFSetField(
+            dst,
+            TIFFTAG_GEOKEYDIRECTORYTAG,
+            data.len() as u32,
+            data.as_ptr(),
+        );
     }
 
     // GeoDoubleParamsTag (34736) - array of doubles
     if let Some(ref data) = geotiff_data.geo_double_params {
-        TIFFSetField(dst, TIFFTAG_GEODOUBLEPARAMSTAG, data.len() as u32, data.as_ptr());
+        TIFFSetField(
+            dst,
+            TIFFTAG_GEODOUBLEPARAMSTAG,
+            data.len() as u32,
+            data.as_ptr(),
+        );
     }
 
     // GeoAsciiParamsTag (34737) - ASCII string
