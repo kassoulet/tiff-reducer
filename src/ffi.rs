@@ -1,5 +1,6 @@
 use libc::{c_char, c_int, c_void};
 
+#[allow(clippy::upper_case_acronyms)]
 pub enum TIFF {}
 
 #[repr(C)]
@@ -36,7 +37,9 @@ extern "C" {
     pub fn TIFFIsBigTIFF(tif: *mut TIFF) -> c_int;
 
     // Error handling - use raw pointer for va_list (unstable in stable Rust)
-    pub fn TIFFSetWarningHandler(handler: Option<unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void)>);
+    pub fn TIFFSetWarningHandler(
+        handler: Option<unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void)>,
+    );
 
     // Tag registration for custom/GeoTIFF tags
     pub fn TIFFMergeFieldInfo(tif: *mut TIFF, info: *const TIFFFieldInfo, n: i32) -> c_int;
@@ -80,9 +83,9 @@ pub const TIFFTAG_IMAGEDESCRIPTION: u32 = 270;
 #[allow(dead_code)]
 pub const EXTRASAMPLE_UNSPECIFIED: u16 = 0;
 #[allow(dead_code)]
-pub const EXTRASAMPLE_ASSOCALPHA: u16 = 1;  // Associated alpha
+pub const EXTRASAMPLE_ASSOCALPHA: u16 = 1; // Associated alpha
 #[allow(dead_code)]
-pub const EXTRASAMPLE_UNASSALPHA: u16 = 2;  // Unassociated alpha
+pub const EXTRASAMPLE_UNASSALPHA: u16 = 2; // Unassociated alpha
 
 // GeoTIFF
 pub const TIFFTAG_MODELPIXELSCALETAG: u32 = 33550;
@@ -119,9 +122,9 @@ pub const PREDICTOR_HORIZONTAL: u16 = 2;
 pub const PREDICTOR_FLOATINGPOINT: u16 = 3;
 
 // Compression level tags (libtiff 4.7+)
-pub const TIFFTAG_ZSTD_LEVEL: u32 = 65564;    // ZSTD compression level
-pub const TIFFTAG_DEFLATELEVEL: u32 = 320;    // Deflate compression level
-pub const TIFFTAG_LZMAPRESET: u32 = 34926;    // LZMA preset level
+pub const TIFFTAG_ZSTD_LEVEL: u32 = 65564; // ZSTD compression level
+pub const TIFFTAG_DEFLATELEVEL: u32 = 320; // Deflate compression level
+pub const TIFFTAG_LZMAPRESET: u32 = 34926; // LZMA preset level
 
 pub const SAMPLEFORMAT_UINT: u16 = 1;
 pub const SAMPLEFORMAT_INT: u16 = 2;
@@ -133,7 +136,7 @@ pub const PHOTOMETRIC_RGB: u16 = 2;
 #[allow(dead_code)]
 pub const PHOTOMETRIC_PALETTE: u16 = 3;
 #[allow(dead_code)]
-pub const PHOTOMETRIC_SEPARATED: u16 = 5;  // CMYK
+pub const PHOTOMETRIC_SEPARATED: u16 = 5; // CMYK
 #[allow(dead_code)]
 pub const PHOTOMETRIC_YCBCR: u16 = 6;
 

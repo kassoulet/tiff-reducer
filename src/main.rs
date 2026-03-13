@@ -1,16 +1,18 @@
+#![allow(clippy::collapsible_if, clippy::redundant_closure_for_method_calls)]
+
 mod ffi;
 mod metadata;
 mod quantize;
 
 use crate::ffi::*;
 use crate::metadata::clone_metadata;
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
-use std::ffi::CString;
-use std::path::{Path, PathBuf};
-use std::fs;
-use anyhow::{Result, anyhow};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
+use std::ffi::CString;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "tiffthin-rs")]
@@ -98,6 +100,7 @@ impl std::fmt::Display for Predictor {
 }
 
 impl Predictor {
+    #[allow(clippy::wrong_self_convention)]
     fn to_ffi(&self) -> u16 {
         match self {
             Predictor::None => PREDICTOR_NONE,
@@ -125,6 +128,7 @@ impl std::fmt::Display for CompressionFormat {
 }
 
 impl CompressionFormat {
+    #[allow(clippy::wrong_self_convention)]
     fn to_ffi(&self) -> u16 {
         match self {
             CompressionFormat::Zstd => COMPRESSION_ZSTD,
@@ -143,19 +147,29 @@ impl CompressionFormat {
 
 fn main() -> Result<()> {
     env_logger::init();
-    
+
     // Suppress libtiff warnings for unknown tags (GeoTIFF tags)
     unsafe {
         crate::ffi::suppress_warnings();
     }
-    
+
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Analyze { file } => analyze_file(&file),
-        Commands::Compress { input, output, format, level, quantize, extreme, dry_run, benchmark, jobs } => {
-            compress_command(input, output, format, level, quantize, extreme, dry_run, benchmark, jobs)
-        }
+        Commands::Compress {
+            input,
+            output,
+            format,
+            level,
+            quantize,
+            extreme,
+            dry_run,
+            benchmark,
+            jobs,
+        } => compress_command(
+            input, output, format, level, quantize, extreme, dry_run, benchmark, jobs,
+        ),
     }
 }
 
@@ -188,12 +202,15 @@ fn analyze_file(path: &Path) -> Result<()> {
         println!("File: {:?}", path);
         println!("Dimensions: {}x{}", w, h);
         println!("Samples: {} channels, {} bits/sample", spp, bps);
-        println!("Format: {}", match fmt {
-            SAMPLEFORMAT_UINT => "Unsigned Integer",
-            SAMPLEFORMAT_INT => "Signed Integer",
-            SAMPLEFORMAT_IEEEFP => "Floating Point",
-            _ => "Unknown",
-        });
+        println!(
+            "Format: {}",
+            match fmt {
+                SAMPLEFORMAT_UINT => "Unsigned Integer",
+                SAMPLEFORMAT_INT => "Signed Integer",
+                SAMPLEFORMAT_IEEEFP => "Floating Point",
+                _ => "Unknown",
+            }
+        );
         println!("Compression Codec Code: {}", comp);
 
         TIFFClose(tif);
@@ -201,7 +218,18 @@ fn analyze_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn compress_command(input: PathBuf, output: Option<PathBuf>, format: CompressionFormat, level: Option<u32>, quantize: bool, extreme: bool, dry_run: bool, benchmark: bool, jobs: Option<usize>) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn compress_command(
+    input: PathBuf,
+    output: Option<PathBuf>,
+    format: CompressionFormat,
+    level: Option<u32>,
+    quantize: bool,
+    extreme: bool,
+    dry_run: bool,
+    benchmark: bool,
+    jobs: Option<usize>,
+) -> Result<()> {
     // Set default compression level for Zstd if not specified (libtiff 4.7+)
     let level = level.or_else(|| {
         if format == CompressionFormat::Zstd {
@@ -215,7 +243,10 @@ fn compress_command(input: PathBuf, output: Option<PathBuf>, format: Compression
         fs::read_dir(&input)?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| p.extension().map_or(false, |ext| ext == "tif" || ext == "tiff"))
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|ext| ext == "tif" || ext == "tiff")
+            })
             .collect::<Vec<_>>()
     } else {
         vec![input]
@@ -224,71 +255,101 @@ fn compress_command(input: PathBuf, output: Option<PathBuf>, format: Compression
     let m = MultiProgress::new();
 
     // Use rayon for file-level parallelism with configurable job count
-    let num_jobs = jobs.unwrap_or_else(|| num_cpus::get());
-    
-    files.par_iter().with_max_len(num_jobs).for_each(|file_path| {
-        let pb = m.add(ProgressBar::new(100));
-        pb.set_style(ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] {msg} [{bar:40.cyan/blue}] {pos}%")
-            .unwrap());
-        pb.set_position(0);
-        pb.set_message(format!("Processing {:?}", file_path.file_name().unwrap()));
+    let num_jobs = jobs.unwrap_or_else(num_cpus::get);
 
-        let target_output = if let Some(ref out) = output {
-            if out.is_dir() {
-                out.join(file_path.file_name().unwrap())
-            } else {
-                out.clone()
-            }
-        } else {
-            file_path.clone()
-        };
+    files
+        .par_iter()
+        .with_max_len(num_jobs)
+        .for_each(|file_path| {
+            let pb = m.add(ProgressBar::new(100));
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template(
+                        "{spinner:.green} [{elapsed_precise}] {msg} [{bar:40.cyan/blue}] {pos}%",
+                    )
+                    .unwrap(),
+            );
+            pb.set_position(0);
+            pb.set_message(format!("Processing {:?}", file_path.file_name().unwrap()));
 
-        match process_single_file(file_path, &target_output, format, level, quantize, extreme, dry_run, benchmark, &pb) {
-            Ok((original, compressed, best_fmt)) => {
-                pb.set_position(100);
-                pb.finish_with_message("Done");
-                
-                if !extreme {
-                    // Display compression result (only if not extreme, since extreme shows its own results)
-                    let ratio = if original > 0 {
-                        (1.0 - (compressed as f64 / original as f64)) * 100.0
-                    } else {
-                        0.0
-                    };
-                    println!("[{}] {} -> {} bytes ({:.1}% reduction, {})",
-                        file_path.file_name().unwrap().to_string_lossy(),
-                        original,
-                        compressed,
-                        ratio,
-                        best_fmt
-                    );
+            let target_output = if let Some(ref out) = output {
+                if out.is_dir() {
+                    out.join(file_path.file_name().unwrap())
                 } else {
-                    // In extreme mode, show final result
-                    let ratio = if original > 0 {
-                        (1.0 - (compressed as f64 / original as f64)) * 100.0
+                    out.clone()
+                }
+            } else {
+                file_path.clone()
+            };
+
+            match process_single_file(
+                file_path,
+                &target_output,
+                format,
+                level,
+                quantize,
+                extreme,
+                dry_run,
+                benchmark,
+                &pb,
+            ) {
+                Ok((original, compressed, best_fmt)) => {
+                    pb.set_position(100);
+                    pb.finish_with_message("Done");
+
+                    if !extreme {
+                        // Display compression result (only if not extreme, since extreme shows its own results)
+                        let ratio = if original > 0 {
+                            (1.0 - (compressed as f64 / original as f64)) * 100.0
+                        } else {
+                            0.0
+                        };
+                        println!(
+                            "[{}] {} -> {} bytes ({:.1}% reduction, {})",
+                            file_path.file_name().unwrap().to_string_lossy(),
+                            original,
+                            compressed,
+                            ratio,
+                            best_fmt
+                        );
                     } else {
-                        0.0
-                    };
-                    println!("\n[{}] Final: {} -> {} bytes ({:.1}% reduction, {})",
-                        file_path.file_name().unwrap().to_string_lossy(),
-                        original,
-                        compressed,
-                        ratio,
-                        best_fmt
-                    );
+                        // In extreme mode, show final result
+                        let ratio = if original > 0 {
+                            (1.0 - (compressed as f64 / original as f64)) * 100.0
+                        } else {
+                            0.0
+                        };
+                        println!(
+                            "\n[{}] Final: {} -> {} bytes ({:.1}% reduction, {})",
+                            file_path.file_name().unwrap().to_string_lossy(),
+                            original,
+                            compressed,
+                            ratio,
+                            best_fmt
+                        );
+                    }
+                }
+                Err(e) => {
+                    pb.finish_with_message(format!("Error: {}", e));
                 }
             }
-            Err(e) => {
-                pb.finish_with_message(format!("Error: {}", e));
-            }
-        }
-    });
+        });
 
     Ok(())
 }
 
-fn process_single_file(input: &Path, output: &Path, format: CompressionFormat, level: Option<u32>, quantize: bool, extreme: bool, dry_run: bool, benchmark: bool, pb: &ProgressBar) -> Result<(u64, u64, String)> {
+#[allow(clippy::too_many_arguments)]
+fn process_single_file(
+    input: &Path,
+    output: &Path,
+    format: CompressionFormat,
+    level: Option<u32>,
+    quantize: bool,
+    extreme: bool,
+    dry_run: bool,
+    benchmark: bool,
+    pb: &ProgressBar,
+) -> Result<(u64, u64, String)> {
     let original_size = fs::metadata(input)?.len();
     let start_time = std::time::Instant::now();
 
@@ -310,7 +371,11 @@ fn process_single_file(input: &Path, output: &Path, format: CompressionFormat, l
     // Predictors to test (skip for lossy formats)
     let predictors = if extreme {
         if is_float {
-            vec![Predictor::None, Predictor::Horizontal, Predictor::FloatingPoint]
+            vec![
+                Predictor::None,
+                Predictor::Horizontal,
+                Predictor::FloatingPoint,
+            ]
         } else {
             // For integer data, only test None and Horizontal
             vec![Predictor::None, Predictor::Horizontal]
@@ -325,13 +390,18 @@ fn process_single_file(input: &Path, output: &Path, format: CompressionFormat, l
     let mut results: Vec<(CompressionFormat, Predictor, u64)> = Vec::new();
 
     if extreme {
-        pb.set_message(format!("Extreme mode: benchmarking formats+predictors for {:?}", input.file_name().unwrap()));
-        
+        pb.set_message(format!(
+            "Extreme mode: benchmarking formats+predictors for {:?}",
+            input.file_name().unwrap()
+        ));
+
         let mut combinations = Vec::new();
         for &fmt in &formats {
             for &pred in &predictors {
                 // Skip predictors for lossy compression (JPEG, WebP)
-                if matches!(fmt, CompressionFormat::Jpeg | CompressionFormat::Webp) && pred != Predictor::None {
+                if matches!(fmt, CompressionFormat::Jpeg | CompressionFormat::Webp)
+                    && pred != Predictor::None
+                {
                     continue;
                 }
                 combinations.push((fmt, pred));
@@ -360,18 +430,30 @@ fn process_single_file(input: &Path, output: &Path, format: CompressionFormat, l
         }
 
         // Display results for each combination
-        println!("\n[{}] Extreme mode results:", input.file_name().unwrap().to_string_lossy());
+        println!(
+            "\n[{}] Extreme mode results:",
+            input.file_name().unwrap().to_string_lossy()
+        );
         for (fmt, pred, size) in &results {
             let ratio = if original_size > 0 {
                 (1.0 - (*size as f64 / original_size as f64)) * 100.0
             } else {
                 0.0
             };
-            let marker = if *fmt == best_format && *pred == best_predictor { "✓" } else { " " };
-            println!("  [{}] {:<10} {:<10} {} bytes ({:.1}% reduction)",
-                marker, fmt, pred, size, ratio);
+            let marker = if *fmt == best_format && *pred == best_predictor {
+                "✓"
+            } else {
+                " "
+            };
+            println!(
+                "  [{}] {:<10} {:<10} {} bytes ({:.1}% reduction)",
+                marker, fmt, pred, size, ratio
+            );
         }
-        pb.set_message(format!("Winner: {} + {} ({} bytes)", best_format, best_predictor, best_size));
+        pb.set_message(format!(
+            "Winner: {} + {} ({} bytes)",
+            best_format, best_predictor, best_size
+        ));
     } else {
         pb.set_message(format!("Compressing {:?}", input.file_name().unwrap()));
     }
@@ -400,7 +482,10 @@ fn process_single_file(input: &Path, output: &Path, format: CompressionFormat, l
         } else {
             0.0
         };
-        println!("\n[{}] Benchmark Results:", input.file_name().unwrap().to_string_lossy());
+        println!(
+            "\n[{}] Benchmark Results:",
+            input.file_name().unwrap().to_string_lossy()
+        );
         println!("  Original size:   {} bytes", original_size);
         println!("  Compressed size: {} bytes", compressed_size);
         println!("  Compression:     {:.1}% reduction", ratio);
@@ -408,7 +493,11 @@ fn process_single_file(input: &Path, output: &Path, format: CompressionFormat, l
         println!("  Throughput:      {:.2} MB/s", throughput_mbs);
     }
 
-    Ok((original_size, compressed_size, format!("{best_format}+{best_predictor}")))
+    Ok((
+        original_size,
+        compressed_size,
+        format!("{best_format}+{best_predictor}"),
+    ))
 }
 
 /// Get the sample format of a TIFF file
@@ -426,8 +515,20 @@ fn get_sample_format(path: &Path) -> Result<u16> {
     }
 }
 
-fn run_compression_pass(input: &Path, output: &Path, compression: u16, predictor: u16, level: Option<u32>, quantize: bool) -> Result<()> {
-    let c_input = CString::new(input.to_str().ok_or_else(|| anyhow!("Invalid input path"))?)?;
+#[allow(clippy::too_many_arguments)]
+fn run_compression_pass(
+    input: &Path,
+    output: &Path,
+    compression: u16,
+    predictor: u16,
+    level: Option<u32>,
+    quantize: bool,
+) -> Result<()> {
+    let c_input = CString::new(
+        input
+            .to_str()
+            .ok_or_else(|| anyhow!("Invalid input path"))?,
+    )?;
 
     // Read GeoTIFF tags from the raw file before libtiff processing
     // Note: GeoTIFF tags are only read from the first IFD
@@ -436,16 +537,26 @@ fn run_compression_pass(input: &Path, output: &Path, compression: u16, predictor
 
     unsafe {
         let tif_src = TIFFOpen(c_input.as_ptr(), CString::new("r")?.as_ptr());
-        if tif_src.is_null() { return Err(anyhow!("Failed to open source TIFF")); }
+        if tif_src.is_null() {
+            return Err(anyhow!("Failed to open source TIFF"));
+        }
 
         // Register GeoTIFF tags immediately after opening
         // This must happen before any directory operations
         crate::metadata::register_geotiff_tags_ffi(tif_src);
 
         let tmp_path = output.with_extension("tmp_tiffthin");
-        let c_tmp = CString::new(tmp_path.to_str().ok_or_else(|| anyhow!("Invalid temp path"))?)?;
+        let c_tmp = CString::new(
+            tmp_path
+                .to_str()
+                .ok_or_else(|| anyhow!("Invalid temp path"))?,
+        )?;
 
-        let mode_str = if input.metadata()?.len() > 4 * 1024 * 1024 * 1024 { "w8" } else { "w" };
+        let mode_str = if input.metadata()?.len() > 4 * 1024 * 1024 * 1024 {
+            "w8"
+        } else {
+            "w"
+        };
         let tif_dst = TIFFOpen(c_tmp.as_ptr(), CString::new(mode_str)?.as_ptr());
         if tif_dst.is_null() {
             TIFFClose(tif_src);
@@ -460,11 +571,20 @@ fn run_compression_pass(input: &Path, output: &Path, compression: u16, predictor
         let mut page = 0;
         loop {
             // Process current IFD
-            process_single_ifd(tif_src, tif_dst, compression, predictor, level, quantize, &geotiff_data, page == 0)?;
+            process_single_ifd(
+                tif_src,
+                tif_dst,
+                compression,
+                predictor,
+                level,
+                quantize,
+                &geotiff_data,
+                page == 0,
+            )?;
 
             // Try to read next directory
             if TIFFReadDirectory(tif_src) == 0 {
-                break;  // No more pages
+                break; // No more pages
             }
             page += 1;
         }
@@ -478,6 +598,7 @@ fn run_compression_pass(input: &Path, output: &Path, compression: u16, predictor
 }
 
 /// Process a single IFD (Image File Directory) / page
+#[allow(clippy::too_many_arguments)]
 unsafe fn process_single_ifd(
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
@@ -615,6 +736,7 @@ unsafe fn process_single_ifd(
 /// Note: Parallelism is handled at the file level (multiple files processed in parallel)
 /// Per-file parallelism would require separate TIFF handles per thread
 #[allow(unused_variables)]
+#[allow(clippy::too_many_arguments)]
 unsafe fn process_striped_image(
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
@@ -626,7 +748,11 @@ unsafe fn process_striped_image(
     quantize: bool,
 ) -> Result<()> {
     let in_scanline = TIFFScanlineSize(tif_src);
-    let out_scanline = if quantize { w * spp as u32 } else { in_scanline };
+    let out_scanline = if quantize {
+        w * spp as u32
+    } else {
+        in_scanline
+    };
 
     let mut buf_in = vec![0u8; in_scanline as usize];
     let mut buf_out = vec![0u8; out_scanline as usize];
@@ -636,10 +762,16 @@ unsafe fn process_striped_image(
 
         if quantize {
             if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
-                let slice_f32 = std::slice::from_raw_parts(buf_in.as_ptr() as *const f32, (w * spp as u32) as usize);
+                let slice_f32 = std::slice::from_raw_parts(
+                    buf_in.as_ptr() as *const f32,
+                    (w * spp as u32) as usize,
+                );
                 crate::quantize::quantize_f32_to_u8(slice_f32, &mut buf_out);
             } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
-                let slice_i16 = std::slice::from_raw_parts(buf_in.as_ptr() as *const i16, (w * spp as u32) as usize);
+                let slice_i16 = std::slice::from_raw_parts(
+                    buf_in.as_ptr() as *const i16,
+                    (w * spp as u32) as usize,
+                );
                 crate::quantize::quantize_i16_to_u8(slice_i16, &mut buf_out);
             } else {
                 let take = std::cmp::min(buf_in.len(), buf_out.len());
@@ -658,6 +790,7 @@ unsafe fn process_striped_image(
 /// Note: Parallelism is handled at the file level (multiple files processed in parallel)
 /// Per-file parallelism would require separate TIFF handles per thread
 #[allow(unused_variables)]
+#[allow(clippy::too_many_arguments)]
 unsafe fn process_tiled_image(
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
@@ -692,21 +825,34 @@ unsafe fn process_tiled_image(
 
     // Process each tile sequentially
     for tile in 0..num_tiles {
-        let bytes_read = TIFFReadEncodedTile(tif_src, tile, buf_in.as_mut_ptr() as *mut _, src_tile_size as u32);
+        let bytes_read = TIFFReadEncodedTile(
+            tif_src,
+            tile,
+            buf_in.as_mut_ptr() as *mut _,
+            src_tile_size as u32,
+        );
         if bytes_read < 0 {
             eprintln!("Warning: Failed to read tile {}", tile);
             continue;
         }
 
         if quantize {
-            let bytes_per_pixel = if bps == 32 { 4 } else if bps == 16 { 2 } else { 1 };
+            let bytes_per_pixel = if bps == 32 {
+                4
+            } else if bps == 16 {
+                2
+            } else {
+                1
+            };
             let actual_pixels = (bytes_read as usize) / bytes_per_pixel;
 
             if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
-                let slice_f32 = std::slice::from_raw_parts(buf_in.as_ptr() as *const f32, actual_pixels);
+                let slice_f32 =
+                    std::slice::from_raw_parts(buf_in.as_ptr() as *const f32, actual_pixels);
                 crate::quantize::quantize_f32_to_u8(slice_f32, &mut buf_out);
             } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
-                let slice_i16 = std::slice::from_raw_parts(buf_in.as_ptr() as *const i16, actual_pixels);
+                let slice_i16 =
+                    std::slice::from_raw_parts(buf_in.as_ptr() as *const i16, actual_pixels);
                 crate::quantize::quantize_i16_to_u8(slice_i16, &mut buf_out);
             } else {
                 buf_out[..bytes_read as usize].copy_from_slice(&buf_in[..bytes_read as usize]);
