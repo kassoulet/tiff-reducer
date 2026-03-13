@@ -134,7 +134,11 @@ cd ../..
 **Note:** If you encounter authentication issues with GitHub, you may need to:
 1. Set up SSH keys: `ssh-keygen` and add to GitHub
 2. Or use HTTPS with a personal access token
-3. Or download repositories as ZIP files and extract
+3. Or use the automated download script:
+   ```bash
+   bash scripts/download_test_images.sh
+   ```
+4. Or download repositories as ZIP files from GitHub and extract
 
 ## Usage
 
