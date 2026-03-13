@@ -1,0 +1,245 @@
+# tiffthin-rs Future Implementation Roadmap
+
+This document lists missing features, problematic formats, and known limitations to address in future releases.
+
+---
+
+## High Priority
+
+### 1. Alpha Channel / ExtraSamples Handling
+**Status:** ✅ **COMPLETED**
+
+**Issue:** Alpha channels are not properly preserved during compression.
+
+**Affected files:** `flagler.tif`, `house.tif`
+
+**Solution implemented:**
+- Added `TIFFTAG_EXTRASAMPLES` tag support in `ffi.rs`
+- Added `copy_extrasamples()` function in `metadata.rs` to preserve ExtraSamples tag
+- Alpha channels now correctly preserved (verified with GDAL: `ColorInterp=Alpha`)
+
+---
+
+### 2. Multi-Page TIFF (MP-TIFF) Support
+**Status:** ✅ **COMPLETED**
+
+**Issue:** Multi-page TIFF files were skipped during processing.
+
+**Affected files:** `shapes_multi_color.tif`, `shapes_multi_*.tif`, OME-TIFF files
+
+**Solution implemented:**
+- Refactored `run_compression_pass()` to iterate through all IFDs using `TIFFReadDirectory()`
+- Created `process_single_ifd()` function to handle per-page metadata copying
+- All pages now processed with same compression settings
+- Page count and order preserved
+
+**Tags handled per-IFD:**
+- Image dimensions (Width, Length)
+- Sample format (BitsPerSample, SamplesPerPixel, SampleFormat)
+- Photometric interpretation
+- Planar configuration
+- Resolution tags (XResolution, YResolution, ResolutionUnit)
+- Colormap (for palette images)
+- ExtraSamples (for alpha channels)
+
+**Note:** GeoTIFF tags are file-level metadata, only copied from first IFD.
+
+---
+
+### 3. OME-TIFF Support
+**Status:** Partially completed (multi-page support done, OME-XML pending)
+
+**Issue:** OME-TIFF (Open Microscopy Environment) files have custom metadata.
+
+**Current status:**
+- ✅ Multi-page iteration now works (all IFDs are processed)
+- ❌ OME-XML metadata in `TIFFTAG_IMAGEDESCRIPTION` not yet preserved
+
+**Problem:**
+- OME-TIFF uses custom metadata and multi-page structure
+- May contain 5D image data (X, Y, Z, Channel, Time)
+- Requires preserving OME-XML metadata
+
+**Solution:**
+- Read and preserve OME-XML from `TIFFTAG_IMAGEDESCRIPTION`
+- Handle multi-dimensional image stacks
+- Consider using `ome-rs` crate for OME-XML parsing
+
+---
+
+## Medium Priority
+
+### 4. YCbCr Color Space Handling
+**Issue:** Some TIFF files use YCbCr photometric interpretation.
+
+**Affected files:** `ycbcr-cat.tif` (in libtiff-pics)
+
+**Problem:**
+- YCbCr requires specific handling for JPEG compression
+- May need to convert to RGB for other compression formats
+
+**Tags to handle:**
+```rust
+pub const PHOTOMETRIC_YCBCR: u16 = 6;
+pub const TIFFTAG_YCBCRSUBSAMPLING: u32 = 530;
+pub const TIFFTAG_YCBCRPOSITION: u32 = 531;
+```
+
+---
+
+### 5. CMYK and ICC Color Profiles
+**Issue:** CMYK images and ICC color profiles may not be preserved.
+
+**Solution:**
+- Preserve `TIFFTAG_ICCPROFILE` (tag 34675)
+- Handle `PHOTOMETRIC_SEPARATED` (value 5) for CMYK
+- Preserve `TIFFTAG_INKSET` and related tags
+
+---
+
+### 6. Float32/Float64 Predictor Support
+**Issue:** Floating Point predictor (Predictor=3) may not work correctly for all cases.
+
+**Problem:**
+- Predictor 3 requires IEEE floating point data
+- May produce artifacts if data is not properly formatted
+
+**Solution:**
+- Verify `TIFFTAG_SAMPLEFORMAT == SAMPLEFORMAT_IEEEFP` before applying
+- Add validation and fallback to Predictor=2 (Horizontal) if needed
+
+---
+
+## Low Priority
+
+### 7. JPEG Compression Quality
+**Issue:** JPEG quality setting uses same tag as Deflate level.
+
+**Problem:**
+- JPEG quality (1-100) shares `TIFFTAG_DEFLATELEVEL` tag
+- May cause confusion in code
+
+**Solution:**
+- Add explicit `TIFFTAG_JPEGQUAL` handling
+- Document quality ranges for each codec
+
+---
+
+### 8. WebP Compression
+**Issue:** WebP compression support is defined but not well tested.
+
+**Tags:**
+```rust
+pub const COMPRESSION_WEBP: u16 = 50001;
+```
+
+**Solution:**
+- Add WebP-specific quality settings
+- Test with various image types
+
+---
+
+### 9. LERC Compression
+**Issue:** LERC (Limited Error Raster Compression) not supported.
+
+**Use case:** Scientific data with bounded error tolerance
+
+**Tags:**
+```rust
+pub const COMPRESSION_LERC: u16 = 50002;
+pub const COMPRESSION_LERC_DEFLATE: u16 = 50003;
+pub const COMPRESSION_LERC_ZSTD: u16 = 50004;
+```
+
+---
+
+### 10. BigTIFF Support
+**Issue:** BigTIFF (>4GB files) handling may need improvement.
+
+**Current status:** Basic support exists (`"w8"` mode)
+
+**Solution:**
+- Auto-detect when BigTIFF is needed
+- Add `--bigtiff` flag for forced BigTIFF output
+- Test with files >4GB
+
+---
+
+## Format-Specific Issues
+
+### Libdeflate Integration
+**Issue:** Libdeflate provides faster Deflate compression but may not be linked.
+
+**Solution:**
+- Ensure libdeflate is properly linked in vendored build
+- Add `TIFFTAG_DEFLATELEVEL` support for libdeflate
+
+### JPEG-Turbo Support
+**Issue:** libjpeg-turbo is vendored but SIMD optimizations may not be enabled.
+
+**Solution:**
+- Enable SIMD in cmake build
+- Test performance improvements
+
+---
+
+## Testing Improvements
+
+### 1. Visual Regression Testing
+**Issue:** Current tests only check metadata, not pixel values.
+
+**Solution:**
+- Add pixel-by-pixel comparison using GDAL
+- Allow small differences for lossy compression (JPEG, WebP)
+- Add SSIM/PSNR metrics for quality assessment
+
+### 2. Performance Benchmarks
+**Issue:** No performance tracking.
+
+**Solution:**
+- Add benchmark mode with timing
+- Track compression speed (MB/s)
+- Compare different compression levels
+
+### 3. Fuzz Testing
+**Issue:** No fuzz testing for malformed TIFF files.
+
+**Solution:**
+- Add fuzz testing with cargo-fuzz
+- Test error handling for corrupted files
+
+---
+
+## Documentation
+
+### 1. Compression Level Guide
+**TODO:** Document optimal compression levels for different data types:
+- **Zstd level 1-3:** Fast compression, good for preview
+- **Zstd level 10-15:** Balanced, good for general use
+- **Zstd level 19-22:** Maximum compression, archival
+
+### 2. Format Compatibility Matrix
+**TODO:** Document which compression formats work with:
+- Different bit depths (8, 16, 32-bit)
+- Different sample formats (uint, int, float)
+- Different photometric interpretations
+
+---
+
+## References
+
+- [TIFF 6.0 Specification](https://www.adobe.io/open/standards/TIFF.html)
+- [BigTIFF Specification](https://www.awaresystems.be/imaging/tiff/bigtiff.html)
+- [GeoTIFF Specification](https://www.ogc.org/standards/geotiff)
+- [OME-TIFF Specification](https://docs.openmicroscopy.org/ome-model/6.3.1/ome-tiff/)
+- [LibTIFF Documentation](https://libtiff.gitlab.io/libtiff/)
+
+---
+
+## Version History
+
+- **v0.1.0**: Basic compression, Zstd/LZMA/Deflate, tiled support, colormap preservation
+- **v0.2.0** (Current): Alpha channel support (ExtraSamples), multi-page TIFF support, GeoTIFF preservation
+  - Test results: 27 passed, 0 failed, 29 skipped (out of 56 files)
+- **v0.3.0** (Planned): OME-XML metadata preservation, visual regression testing
+- **v0.4.0** (Planned): YCbCr/CMYK color spaces, ICC profile preservation

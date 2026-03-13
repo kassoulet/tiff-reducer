@@ -1,0 +1,29 @@
+[package]
+name = "tiffthin-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["Gautier Portet <kassoulet@gmail.com>"]
+description = "High-performance TIFF optimizer using Zstd/LZMA with metadata preservation and GeoTIFF support."
+license = "MIT"
+repository = "https://github.com/youruser/tiffthin-rs"
+readme = "README.md"
+keywords = ["tiff", "geotiff", "compression", "zstd", "optimization"]
+categories = ["command-line-utilities", "multimedia::images"]
+
+[dependencies]
+clap = { version = "4.4", features = ["derive"] }
+indicatif = "0.17"
+rayon = "1.8"
+libc = "0.2"
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"
+
+[build-dependencies]
+pkg-config = "0.3"
+cmake = "0.1"
+
+[features]
+default = []
+# Build libtiff and dependencies from source for static linking
+vendored = []
