@@ -72,14 +72,7 @@ test_file() {
         SKIP=$((SKIP + 1))
         return 0
     fi
-    
-    # Skip multi-page OME-TIFF files for now
-    if [[ "$filename" == *"multi"* ]] || [[ "$filename" == *"ome"* ]]; then
-        echo -e "${YELLOW}SKIP${NC}: $filename (multi-page/OME-TIFF)"
-        SKIP=$((SKIP + 1))
-        return 0
-    fi
-    
+
     # Compress the file
     local result=$("$TIFFTHIN" compress "$input" -o "$output" 2>&1 | grep -v "^⠁\|^TIFFMergeFieldInfo" || true)
     
