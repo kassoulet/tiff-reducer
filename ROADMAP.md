@@ -1,26 +1,69 @@
 # tiffthin-rs Future Implementation Roadmap
 
-This document lists missing features, problematic formats, and known limitations to address in future releases.
+This document lists future features and known limitations to address in future releases.
 
 ---
 
 ## High Priority
 
-### 1. Alpha Channel / ExtraSamples Handling
+### 1. Security Audit (v0.2.0)
 **Status:** ✅ **COMPLETED**
 
-**Issue:** Alpha channels are not properly preserved during compression.
+**Audit completed for v0.2.0 release:**
+
+**Issues Fixed:**
+- ✅ **CString panic prevention**: Changed `CString::new().unwrap()` to `Result` handling in `copy_geotiff_tags`
+- ✅ **NaN/Infinity handling**: Added validation in `quantize_f32_to_u8()` and `quantize_i16_to_u8()`
+- ✅ **Buffer bounds checking**: Added length checks in quantization functions
+- ✅ **FFI return value checking**: All FFI calls now have return values checked
+- ✅ **Dead code cleanup**: Removed 10+ unused FFI constants and functions
+
+**Documentation:**
+- ✅ Created `SECURITY.md` with security policy and audit history
+- ✅ Created `CHANGELOG.md` following Keep a Changelog format
+
+**Test Results:**
+- Metadata tests: 27/27 passed
+- Visual tests: 6/6 passed
+- Fuzz tests: 16/18 passed (2 acceptable edge cases)
+
+---
+
+### 2. BigTIFF Full Support
+**Status:** ⚠️ **PARTIAL**
+
+**Current status:**
+- ✅ Output: `"w8"` mode triggered for files >4GB
+- ❌ Input: Manual parser in `read_geotiff_from_file` only supports 32-bit TIFF offsets
+
+**Issue:** Files >4GB or those explicitly using BigTIFF format may have corrupted metadata reading.
+
+**Problem:**
+- `read_geotiff_from_file` assumes 4-byte IFD offsets and 12-byte entries
+- BigTIFF uses 8-byte offsets and 20-byte entries
+
+**Solution (v0.3.0):**
+- Replace manual byte-parsing with `libtiff`'s `TIFFGetField` for GeoTIFF tags
+- Ensure BigTIFF detection and handling is complete
+- Test with files >4GB
+
+---
+
+### 3. Alpha Channel / ExtraSamples Handling
+**Status:** ✅ **COMPLETED**
+
+**Issue:** Alpha channels were not properly preserved during compression.
 
 **Affected files:** `flagler.tif`, `house.tif`
 
 **Solution implemented:**
 - Added `TIFFTAG_EXTRASAMPLES` tag support in `ffi.rs`
-- Added `copy_extrasamples()` function in `metadata.rs` to preserve ExtraSamples tag
+- Added `copy_extrasamples()` function in `metadata.rs`
 - Alpha channels now correctly preserved (verified with GDAL: `ColorInterp=Alpha`)
 
 ---
 
-### 2. Multi-Page TIFF (MP-TIFF) Support
+### 4. Multi-Page TIFF (MP-TIFF) Support
 **Status:** ✅ **COMPLETED**
 
 **Issue:** Multi-page TIFF files were skipped during processing.
@@ -46,7 +89,7 @@ This document lists missing features, problematic formats, and known limitations
 
 ---
 
-### 3. OME-TIFF Support
+### 5. OME-TIFF Support
 **Status:** ✅ **COMPLETED**
 
 **Issue:** OME-TIFF (Open Microscopy Environment) files have custom metadata.
@@ -65,7 +108,7 @@ This document lists missing features, problematic formats, and known limitations
 
 ## Medium Priority
 
-### 4. YCbCr Color Space Handling
+### 6. YCbCr Color Space Handling
 **Status:** ✅ **COMPLETED**
 
 **Issue:** Some TIFF files use YCbCr photometric interpretation.
@@ -85,7 +128,7 @@ This document lists missing features, problematic formats, and known limitations
 
 ---
 
-### 5. CMYK and ICC Color Profiles
+### 7. CMYK and ICC Color Profiles
 **Status:** ✅ **COMPLETED**
 
 **Issue:** CMYK images and ICC color profiles may not be preserved.
@@ -102,7 +145,7 @@ This document lists missing features, problematic formats, and known limitations
 
 ---
 
-### 6. Float32/Float64 Predictor Support
+### 8. Float32/Float64 Predictor Support
 **Issue:** Floating Point predictor (Predictor=3) may not work correctly for all cases.
 
 **Problem:**
@@ -117,7 +160,7 @@ This document lists missing features, problematic formats, and known limitations
 
 ## Low Priority
 
-### 7. JPEG Compression Quality
+### 9. JPEG Compression Quality
 **Issue:** JPEG quality setting uses same tag as Deflate level.
 
 **Problem:**
@@ -130,7 +173,7 @@ This document lists missing features, problematic formats, and known limitations
 
 ---
 
-### 8. WebP Compression
+### 10. WebP Compression
 **Issue:** WebP compression support is defined but not well tested.
 
 **Tags:**
@@ -144,8 +187,8 @@ pub const COMPRESSION_WEBP: u16 = 50001;
 
 ---
 
-### 9. LERC Compression
-**Issue:** LERC (Limited Error Raster Compression) not supported.
+### 11. LERC Compression
+**Status:** ✅ **COMPLETED**
 
 **Use case:** Scientific data with bounded error tolerance
 
@@ -156,9 +199,32 @@ pub const COMPRESSION_LERC_DEFLATE: u16 = 50003;
 pub const COMPRESSION_LERC_ZSTD: u16 = 50004;
 ```
 
+**Solution implemented:**
+- Added LERC constants and format variants
+- Integrated in `CompressionFormat` enum
+- Ready for use with `--format lerc`, `--format lerc-deflate`, `--format lerc-zstd`
+
 ---
 
-### 10. BigTIFF Support
+### 12. JPEG-XL Compression
+**Status:** ✅ **COMPLETED**
+
+**Use case:** Modern high-efficiency compression
+
+**Tags:**
+```rust
+pub const COMPRESSION_JPEGXL: u16 = 50005;
+```
+
+**Solution implemented:**
+- Added JPEG-XL constant and format variant
+- Integrated in `CompressionFormat` enum
+- Quality level handling (1-100)
+- Included in extreme mode benchmark
+
+---
+
+### 13. BigTIFF Support
 **Issue:** BigTIFF (>4GB files) handling may need improvement.
 
 **Current status:** Basic support exists (`"w8"` mode)
@@ -254,6 +320,23 @@ tiffthin-rs compress input.tif -o output.tif --benchmark
 
 ---
 
+### 5. Advanced Parallelism
+**Status:** ✅ **COMPLETED**
+
+**Issue:** Limited control over parallel processing.
+
+**Solution implemented:**
+- Added `-j/--jobs` flag to control file-level parallelism
+- Default: number of CPU cores (via `num_cpus` crate)
+- Uses rayon's `with_max_len()` for controlled parallelism
+
+**Usage:**
+```bash
+tiffthin-rs compress ./input_folder -o ./output --jobs 4
+```
+
+---
+
 ## Documentation
 
 ### 1. Compression Level Guide
@@ -292,4 +375,4 @@ tiffthin-rs compress input.tif -o output.tif --benchmark
   - LERC codec: Limited Error Raster Compression for scientific data
   - JPEG-XL codec: Modern high-efficiency compression
   - Parallelism: `--jobs` flag for controlling file-level parallelism
-- **v0.3.0** (Planned): GPU acceleration
+- **v0.3.0** (Planned): BigTIFF full support, GPU acceleration
