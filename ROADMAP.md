@@ -15,37 +15,18 @@ This document lists future features and known limitations to address in future r
 - ✅ **CString panic prevention**: Changed `CString::new().unwrap()` to `Result` handling in `copy_geotiff_tags`
 - ✅ **NaN/Infinity handling**: Added validation in `quantize_f32_to_u8()` and `quantize_i16_to_u8()`
 - ✅ **Buffer bounds checking**: Added length checks in quantization functions
-- ✅ **FFI return value checking**: All FFI calls now have return values checked
+- ✅ **FFI return value checking**: All critical FFI calls (GetField, ReadScanline, etc.) now have return values checked
 - ✅ **Dead code cleanup**: Removed 10+ unused FFI constants and functions
-
-**Documentation:**
-- ✅ Created `SECURITY.md` with security policy and audit history
-- ✅ Created `CHANGELOG.md` following Keep a Changelog format
-
-**Test Results:**
-- Metadata tests: 27/27 passed
-- Visual tests: 6/6 passed
-- Fuzz tests: 16/18 passed (2 acceptable edge cases)
+- ✅ **Memory Safety Overhaul**: Replaced manual byte-parsing in `metadata.rs` with `libtiff` native API. Added strict bounds checking for all metadata allocations and validated actual bytes read from `libtiff` before quantization.
 
 ---
 
-### 2. BigTIFF Full Support
-**Status:** ⚠️ **PARTIAL**
+### 2. BigTIFF Support
+**Status:** ✅ **COMPLETED**
 
-**Current status:**
-- ✅ Output: `"w8"` mode triggered for files >4GB
-- ❌ Input: Manual parser in `read_geotiff_from_file` only supports 32-bit TIFF offsets
-
-**Issue:** Files >4GB or those explicitly using BigTIFF format may have corrupted metadata reading.
-
-**Problem:**
-- `read_geotiff_from_file` assumes 4-byte IFD offsets and 12-byte entries
-- BigTIFF uses 8-byte offsets and 20-byte entries
-
-**Solution (v0.3.0):**
-- Replace manual byte-parsing with `libtiff`'s `TIFFGetField` for GeoTIFF tags
-- Ensure BigTIFF detection and handling is complete
-- Test with files >4GB
+**Solution implemented:**
+- Refactored `metadata.rs` to use `libtiff`'s native tag reading API, which automatically handles BigTIFF 8-byte offsets and 20-byte entries.
+- Verified support for large files using `"w8"` mode.
 
 ---
 

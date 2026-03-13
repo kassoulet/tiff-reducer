@@ -49,16 +49,16 @@ generate_truncated_tiff() {
     local keep_bytes=$2
     
     # Start with valid TIFF header then truncate
-    dd if="$PROJECT_DIR/vendor/exampletiffs/poppies.tif" of="$output" bs=1 count=$keep_bytes 2>/dev/null
+    dd if="$PROJECT_DIR/tests/images/exampletiffs/poppies.tif" of="$output" bs=1 count=$keep_bytes 2>/dev/null
 }
 
 # Function to generate corrupted TIFF
 generate_corrupted_tiff() {
     local output=$1
     local corruption_type=$2
-    
+
     # Copy valid TIFF
-    cp "$PROJECT_DIR/vendor/exampletiffs/poppies.tif" "$output"
+    cp "$PROJECT_DIR/tests/images/exampletiffs/poppies.tif" "$output"
     
     case $corruption_type in
         "header")

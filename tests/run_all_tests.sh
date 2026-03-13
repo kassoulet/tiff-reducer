@@ -10,8 +10,8 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 TIFFTHIN="$PROJECT_DIR/target/debug/tiffthin-rs"
 
 # Test image repositories
-EXAMPLETIFFS_DIR="$PROJECT_DIR/vendor/exampletiffs"
-LIBTIFF_PICS_DIR="$PROJECT_DIR/vendor/libtiff-pics"
+EXAMPLETIFFS_DIR="$PROJECT_DIR/tests/images/exampletiffs"
+LIBTIFF_PICS_DIR="$PROJECT_DIR/tests/images/libtiff-pics"
 
 # Output directory
 OUTPUT_DIR="/tmp/tiffthin_test_output"
