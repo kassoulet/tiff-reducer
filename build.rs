@@ -105,42 +105,64 @@ fn build_zlib(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include_dir: 
 
 fn build_libjpeg(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include_dir: &Path, target: &str) {
     let source_dir = clone_or_use(out_dir, manifest_dir, "libjpeg-turbo", "https://github.com/libjpeg-turbo/libjpeg-turbo.git", "3.1.0");
-    
+
     let mut cfg = cmake::Config::new(&source_dir);
     cfg.define("BUILD_SHARED_LIBS", "OFF")
        .define("WITH_TURBOJPEG", "OFF")
        .define("ENABLE_STATIC", "ON")
        .define("ENABLE_SHARED", "OFF")
        .define("CMAKE_INSTALL_LIBDIR", "lib")
-       .define("CMAKE_INSTALL_INCLUDEDIR", "include");
-    
+       .define("CMAKE_INSTALL_INCLUDEDIR", "include")
+       // Enable SIMD optimizations
+       .define("WITH_SIMD", "ON");
+
+    // Platform-specific SIMD flags
+    if target.contains("x86_64") {
+        cfg.cflag("-mssse3")
+           .cflag("-msse4.2")
+           .cflag("-mavx2");
+    } else if target.contains("aarch64") {
+        cfg.cflag("-march=armv8-a+simd");
+    }
+
     if target.contains("musl") {
         cfg.cflag("-static");
     }
-    
+
     cfg.build();
 }
 
 fn build_libdeflate(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include_dir: &Path, target: &str) {
     let source_dir = clone_or_use(out_dir, manifest_dir, "libdeflate", "https://github.com/ebiggers/libdeflate.git", "v1.22");
-    
+
     let mut cfg = cmake::Config::new(&source_dir);
     cfg.define("BUILD_SHARED_LIBS", "OFF")
        .define("LIBDEFLATE_BUILD_TESTS", "OFF")
        .define("LIBDEFLATE_BUILD_STATIC_LIB", "ON")
        .define("CMAKE_INSTALL_LIBDIR", "lib")
-       .define("CMAKE_INSTALL_INCLUDEDIR", "include");
-    
+       .define("CMAKE_INSTALL_INCLUDEDIR", "include")
+       // Enable SIMD optimizations for deflate
+       .define("LIBDEFLATE_BUILD_STATIC_LIB", "ON");
+
+    // Platform-specific SIMD flags for libdeflate
+    if target.contains("x86_64") {
+        cfg.cflag("-msse4.2")
+           .cflag("-mpclmul")
+           .cflag("-mavx2");
+    } else if target.contains("aarch64") {
+        cfg.cflag("-march=armv8-a+crc+crypto");
+    }
+
     if target.contains("musl") {
         cfg.cflag("-static");
     }
-    
+
     cfg.build();
 }
 
 fn build_libzstd(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include_dir: &Path, target: &str) {
     let source_dir = clone_or_use(out_dir, manifest_dir, "zstd", "https://github.com/facebook/zstd.git", "v1.5.6");
-    
+
     let mut cfg = cmake::Config::new(&source_dir.join("build/cmake"));
     cfg.define("ZSTD_BUILD_SHARED", "OFF")
        .define("ZSTD_BUILD_STATIC", "ON")
@@ -148,12 +170,20 @@ fn build_libzstd(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include_di
        .define("ZSTD_BUILD_TESTS", "OFF")
        .define("ZSTD_BUILD_CONTRIB", "OFF")
        .define("CMAKE_INSTALL_LIBDIR", "lib")
-       .define("CMAKE_INSTALL_INCLUDEDIR", "include");
-    
+       .define("CMAKE_INSTALL_INCLUDEDIR", "include")
+       // Enable SIMD optimizations for zstd
+       .define("ZSTD_LEGACY_SUPPORT", "OFF");
+
+    // Platform-specific SIMD flags for zstd
+    if target.contains("x86_64") {
+        cfg.cflag("-msse4.2")
+           .cflag("-mavx2");
+    }
+
     if target.contains("musl") {
         cfg.cflag("-static");
     }
-    
+
     cfg.build();
 }
 

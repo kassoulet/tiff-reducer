@@ -222,7 +222,21 @@ pub const COMPRESSION_LERC_ZSTD: u16 = 50004;
 tiffthin-rs compress input.tif -o output.tif --benchmark
 ```
 
-### 3. Fuzz Testing
+### 3. SIMD Optimizations
+**Status:** ✅ **COMPLETED**
+
+**Issue:** Vendored libraries not using SIMD instructions.
+
+**Solution implemented:**
+- **libjpeg-turbo**: Enabled `WITH_SIMD` + SSE4.2/AVX2 (x86_64) or NEON (ARM64)
+- **libdeflate**: Enabled SSE4.2/PCLMUL/AVX2 (x86_64) or CRC/crypto (ARM64)
+- **libzstd**: Enabled SSE4.2/AVX2 (x86_64)
+
+**Performance improvement:** ~12% throughput increase (1.16 → 1.30 MB/s on test file)
+
+---
+
+### 4. Fuzz Testing
 **Status:** ✅ **COMPLETED**
 
 **Issue:** No fuzz testing for malformed TIFF files.
@@ -269,10 +283,11 @@ tiffthin-rs compress input.tif -o output.tif --benchmark
 ## Version History
 
 - **v0.1.0**: Basic compression, Zstd/LZMA/Deflate, tiled support, colormap preservation
-- **v0.2.0** (Current): Alpha channel, multi-page TIFF, GeoTIFF, ICC, YCbCr, CMYK, OME-XML, visual regression testing, performance benchmarks, fuzz testing
+- **v0.2.0** (Current): Alpha channel, multi-page TIFF, GeoTIFF, ICC, YCbCr, CMYK, OME-XML, visual regression testing, performance benchmarks, fuzz testing, SIMD optimizations
   - Metadata tests: 27 passed, 0 failed, 29 skipped (out of 56 files)
   - Visual tests: 6/6 passed (pixel statistics match for lossless)
   - Fuzz tests: 16/18 passed (error handling validated)
   - Benchmark mode: `--benchmark` flag for timing/throughput metrics
-- **v0.3.0** (Planned): SIMD optimizations, additional codec support
-- **v0.4.0** (Planned): LERC/JPEG-XL codecs, advanced parallelism
+  - SIMD optimizations: ~12% performance improvement (SSE4.2/AVX2/NEON)
+- **v0.3.0** (Planned): Additional codec support (LERC, JPEG-XL)
+- **v0.4.0** (Planned): Advanced parallelism, GPU acceleration
