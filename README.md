@@ -115,13 +115,26 @@ git submodule update --init --recursive
 # Create test images directory
 mkdir -p tests/images
 
-# Download test images manually
+# Download test images manually (choose one or more)
 cd tests/images
+
+# Option 1: exampletiffs
 git clone https://github.com/jeremy-lao/exampletiffs.git
+
+# Option 2: libtiff-pics  
 git clone https://github.com/ImageMagick/libtiff-pics.git
+
+# Option 3: image-tiff test images
 git clone https://github.com/image-rs/image-tiff.git
+# Test images are in: image-tiff/test_images/
+
 cd ../..
 ```
+
+**Note:** If you encounter authentication issues with GitHub, you may need to:
+1. Set up SSH keys: `ssh-keygen` and add to GitHub
+2. Or use HTTPS with a personal access token
+3. Or download repositories as ZIP files and extract
 
 ## Usage
 
