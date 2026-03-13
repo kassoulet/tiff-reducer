@@ -13,6 +13,16 @@ TIFFTHIN="$PROJECT_DIR/target/debug/tiffthin-rs"
 EXAMPLETIFFS_DIR="$PROJECT_DIR/tests/images/exampletiffs"
 LIBTIFF_PICS_DIR="$PROJECT_DIR/tests/images/libtiff-pics"
 
+# Check if test images exist
+if [ ! -d "$EXAMPLETIFFS_DIR" ] || [ ! -d "$LIBTIFF_PICS_DIR" ]; then
+    echo -e "${RED}Error: Test images not found${NC}"
+    echo "Run: git submodule update --init --recursive"
+    echo "Or download manually from:"
+    echo "  - https://github.com/jeremy-lao/exampletiffs"
+    echo "  - https://github.com/ImageMagick/libtiff-pics"
+    exit 1
+fi
+
 # Output directory
 OUTPUT_DIR="/tmp/tiffthin_test_output"
 mkdir -p "$OUTPUT_DIR"
