@@ -75,6 +75,7 @@ pub const TIFFTAG_COLORMAP: u32 = 320;
 pub const TIFFTAG_SAMPLEFORMAT: u32 = 339;
 pub const TIFFTAG_SMINSAMPLEVALUE: u32 = 340;
 pub const TIFFTAG_EXTRASAMPLES: u32 = 338;
+pub const TIFFTAG_ICCPROFILE: u32 = 34675;
 
 // ExtraSamples values
 pub const EXTRASAMPLE_UNSPECIFIED: u16 = 0;

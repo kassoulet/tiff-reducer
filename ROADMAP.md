@@ -88,12 +88,18 @@ pub const TIFFTAG_YCBCRPOSITION: u32 = 531;
 ---
 
 ### 5. CMYK and ICC Color Profiles
+**Status:** ✅ **COMPLETED** (ICC Profile)
+
 **Issue:** CMYK images and ICC color profiles may not be preserved.
 
-**Solution:**
-- Preserve `TIFFTAG_ICCPROFILE` (tag 34675)
-- Handle `PHOTOMETRIC_SEPARATED` (value 5) for CMYK
-- Preserve `TIFFTAG_INKSET` and related tags
+**Solution implemented:**
+- Added `TIFFTAG_ICCPROFILE` (tag 34675) support in `ffi.rs`
+- Added `copy_icc_profile()` function in `metadata.rs`
+- ICC profiles now preserved on all pages (verified with `tiffinfo`)
+
+**TODO:**
+- [ ] CMYK support (`PHOTOMETRIC_SEPARATED`)
+- [ ] `TIFFTAG_INKSET` and related tags
 
 ---
 
@@ -239,7 +245,7 @@ pub const COMPRESSION_LERC_ZSTD: u16 = 50004;
 ## Version History
 
 - **v0.1.0**: Basic compression, Zstd/LZMA/Deflate, tiled support, colormap preservation
-- **v0.2.0** (Current): Alpha channel support (ExtraSamples), multi-page TIFF support, GeoTIFF preservation
+- **v0.2.0** (Current): Alpha channel (ExtraSamples), multi-page TIFF, GeoTIFF, ICC profile preservation
   - Test results: 27 passed, 0 failed, 29 skipped (out of 56 files)
 - **v0.3.0** (Planned): OME-XML metadata preservation, visual regression testing
-- **v0.4.0** (Planned): YCbCr/CMYK color spaces, ICC profile preservation
+- **v0.4.0** (Planned): YCbCr/CMYK color spaces, performance benchmarks

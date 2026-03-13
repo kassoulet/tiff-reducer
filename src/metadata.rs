@@ -240,6 +240,19 @@ pub unsafe fn copy_extrasamples(src: *mut TIFF, dst: *mut TIFF) {
     }
 }
 
+/// Copy ICC color profile from source to destination
+pub unsafe fn copy_icc_profile(src: *mut TIFF, dst: *mut TIFF) {
+    let mut profile: *mut u8 = std::ptr::null_mut();
+    let mut count: u32 = 0;
+
+    // TIFFGetField for ICC profile returns count and pointer to byte array
+    if TIFFGetField(src, TIFFTAG_ICCPROFILE, &mut count, &mut profile) != 0 {
+        if !profile.is_null() && count > 0 {
+            TIFFSetField(dst, TIFFTAG_ICCPROFILE, count, profile);
+        }
+    }
+}
+
 /// Public FFI version - registers GeoTIFF tags for reading/writing
 /// Must be called immediately after opening a TIFF file
 pub unsafe fn register_geotiff_tags_ffi(tif: *mut TIFF) {
