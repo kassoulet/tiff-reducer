@@ -91,6 +91,24 @@ cargo build --release --features vendored
 
 For a **fully static binary** (no glibc dependency), use the Docker build or compile with `--target x86_64-unknown-linux-musl` (requires musl toolchain).
 
+### Development Build (with Test Images)
+
+This project uses git submodules for test images. To clone with test images:
+
+```bash
+# Clone with submodules
+git clone --recurse-submodules https://github.com/youruser/tiffthin-rs.git
+
+# Or initialize submodules after cloning
+git clone https://github.com/youruser/tiffthin-rs.git
+cd tiffthin-rs
+git submodule update --init --recursive
+```
+
+**Test images location:** `tests/images/`
+- `tests/images/exampletiffs/` - Test images from exampletiffs repository
+- `tests/images/libtiff-pics/` - Test images from libtiff-pics repository
+
 ## Usage
 
 ### Compress a file (Overwrites by default)

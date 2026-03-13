@@ -128,7 +128,7 @@ for file in \
     "shapes_tiled.tif" \
     ; do
     
-    filepath="$PROJECT_DIR/vendor/exampletiffs/$file"
+    filepath="$PROJECT_DIR/tests/images/exampletiffs/$file"
     if [ -f "$filepath" ]; then
         test_file "$filepath"
     fi
@@ -137,7 +137,7 @@ done
 # Test multi-page
 echo "--- Testing Multi-Page TIFF ---"
 echo ""
-multi_file="$PROJECT_DIR/vendor/exampletiffs/shapes_multi_color.tif"
+multi_file="$PROJECT_DIR/tests/images/exampletiffs/shapes_multi_color.tif"
 if [ -f "$multi_file" ]; then
     test_file "$multi_file"
 fi
@@ -145,7 +145,7 @@ fi
 # Test OME-TIFF
 echo "--- Testing OME-TIFF ---"
 echo ""
-ome_file="$PROJECT_DIR/vendor/exampletiffs/ometiff_testdata/singles/single-channel.ome.tif"
+ome_file="$PROJECT_DIR/tests/images/exampletiffs/ometiff_testdata/singles/single-channel.ome.tif"
 if [ -f "$ome_file" ]; then
     test_file "$ome_file"
 fi
