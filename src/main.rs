@@ -73,6 +73,7 @@ enum CompressionFormat {
     Lerc,
     LercDeflate,
     LercZstd,
+    JpegXl,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -114,6 +115,7 @@ impl std::fmt::Display for CompressionFormat {
             CompressionFormat::Lerc => write!(f, "LERC"),
             CompressionFormat::LercDeflate => write!(f, "LERC-Deflate"),
             CompressionFormat::LercZstd => write!(f, "LERC-Zstd"),
+            CompressionFormat::JpegXl => write!(f, "JPEG-XL"),
         }
     }
 }
@@ -130,6 +132,7 @@ impl CompressionFormat {
             CompressionFormat::Lerc => COMPRESSION_LERC,
             CompressionFormat::LercDeflate => COMPRESSION_LERC_DEFLATE,
             CompressionFormat::LercZstd => COMPRESSION_LERC_ZSTD,
+            CompressionFormat::JpegXl => COMPRESSION_JPEGXL,
         }
     }
 }
@@ -287,6 +290,7 @@ fn process_single_file(input: &Path, output: &Path, format: CompressionFormat, l
             CompressionFormat::Zstd,
             CompressionFormat::Lzma,
             CompressionFormat::Deflate,
+            CompressionFormat::JpegXl,
         ]
     } else {
         vec![format]
@@ -572,6 +576,12 @@ unsafe fn process_single_ifd(
             COMPRESSION_LZMA => {
                 let clamped: i32 = lvl.clamp(1, 9) as i32;
                 TIFFSetField(tif_dst, TIFFTAG_LZMAPRESET, clamped);
+            }
+            COMPRESSION_JPEGXL => {
+                // JPEG-XL quality level (1-100, default 75)
+                let clamped: i32 = lvl.clamp(1, 100) as i32;
+                // JPEG-XL uses the same tag as JPEG for quality
+                TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, clamped);
             }
             _ => {}
         }
