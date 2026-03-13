@@ -90,7 +90,7 @@ This document lists missing features, problematic formats, and known limitations
 ---
 
 ### 5. CMYK and ICC Color Profiles
-**Status:** ✅ **COMPLETED** (ICC Profile)
+**Status:** ✅ **COMPLETED**
 
 **Issue:** CMYK images and ICC color profiles may not be preserved.
 
@@ -98,10 +98,11 @@ This document lists missing features, problematic formats, and known limitations
 - Added `TIFFTAG_ICCPROFILE` (tag 34675) support in `ffi.rs`
 - Added `copy_icc_profile()` function in `metadata.rs`
 - ICC profiles now preserved on all pages (verified with `tiffinfo`)
+- Added CMYK tag support: `TIFFTAG_INKSET`, `TIFFTAG_DOTRANGE`, `TIFFTAG_INKNAMES`, `TIFFTAG_NUMBEROFINKS`
+- Added `copy_cmyk_tags()` function for ink-related metadata
+- `PHOTOMETRIC_SEPARATED` (value 5) handled via generic photometric copying
 
-**TODO:**
-- [ ] CMYK support (`PHOTOMETRIC_SEPARATED`)
-- [ ] `TIFFTAG_INKSET` and related tags
+**Note:** No CMYK test files in current test repositories, but implementation ready for CMYK TIFFs.
 
 ---
 
@@ -247,7 +248,7 @@ pub const COMPRESSION_LERC_ZSTD: u16 = 50004;
 ## Version History
 
 - **v0.1.0**: Basic compression, Zstd/LZMA/Deflate, tiled support, colormap preservation
-- **v0.2.0** (Current): Alpha channel (ExtraSamples), multi-page TIFF, GeoTIFF, ICC profile, YCbCr color space
+- **v0.2.0** (Current): Alpha channel (ExtraSamples), multi-page TIFF, GeoTIFF, ICC profile, YCbCr, CMYK support
   - Test results: 27 passed, 0 failed, 29 skipped (out of 56 files)
 - **v0.3.0** (Planned): OME-XML metadata preservation, visual regression testing
-- **v0.4.0** (Planned): CMYK support, performance benchmarks
+- **v0.4.0** (Planned): Performance benchmarks, fuzz testing

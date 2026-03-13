@@ -277,6 +277,36 @@ pub unsafe fn copy_ycbcr_tags(src: *mut TIFF, dst: *mut TIFF) {
     }
 }
 
+/// Copy CMYK/Ink-related tags
+pub unsafe fn copy_cmyk_tags(src: *mut TIFF, dst: *mut TIFF) {
+    // InkSet (single SHORT value)
+    let mut inkset: u16 = 0;
+    if TIFFGetField(src, TIFFTAG_INKSET, &mut inkset) != 0 {
+        TIFFSetField(dst, TIFFTAG_INKSET, inkset as u32);
+    }
+
+    // DotRange (two SHORT values: 0-65535 representing 0.0-100.0%)
+    let mut dot0: u16 = 0;
+    let mut dot1: u16 = 0;
+    if TIFFGetField(src, TIFFTAG_DOTRANGE, &mut dot0, &mut dot1) != 0 {
+        TIFFSetField(dst, TIFFTAG_DOTRANGE, dot0 as u32, dot1 as u32);
+    }
+
+    // NumberOfInks (single LONG value)
+    let mut num_inks: u32 = 0;
+    if TIFFGetField(src, TIFFTAG_NUMBEROFINKS, &mut num_inks) != 0 {
+        TIFFSetField(dst, TIFFTAG_NUMBEROFINKS, num_inks);
+    }
+
+    // InkNames (ASCII string)
+    let mut ink_names: *mut i8 = std::ptr::null_mut();
+    if TIFFGetField(src, TIFFTAG_INKNAMES, &mut ink_names) != 0 {
+        if !ink_names.is_null() {
+            TIFFSetField(dst, TIFFTAG_INKNAMES, ink_names);
+        }
+    }
+}
+
 /// Public FFI version - registers GeoTIFF tags for reading/writing
 /// Must be called immediately after opening a TIFF file
 pub unsafe fn register_geotiff_tags_ffi(tif: *mut TIFF) {
