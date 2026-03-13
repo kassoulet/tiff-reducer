@@ -283,12 +283,13 @@ tiffthin-rs compress input.tif -o output.tif --benchmark
 ## Version History
 
 - **v0.1.0**: Basic compression, Zstd/LZMA/Deflate, tiled support, colormap preservation
-- **v0.2.0** (Current): Alpha channel, multi-page TIFF, GeoTIFF, ICC, YCbCr, CMYK, OME-XML, visual regression testing, performance benchmarks, fuzz testing, SIMD optimizations, LERC codec
+- **v0.2.0** (Current): Alpha channel, multi-page TIFF, GeoTIFF, ICC, YCbCr, CMYK, OME-XML, visual regression testing, performance benchmarks, fuzz testing, SIMD optimizations, LERC/JPEG-XL codecs
   - Metadata tests: 27 passed, 0 failed, 29 skipped (out of 56 files)
   - Visual tests: 6/6 passed (pixel statistics match for lossless)
   - Fuzz tests: 16/18 passed (error handling validated)
   - Benchmark mode: `--benchmark` flag for timing/throughput metrics
   - SIMD optimizations: ~12% performance improvement (SSE4.2/AVX2/NEON)
   - LERC codec: Limited Error Raster Compression for scientific data
-- **v0.3.0** (Planned): JPEG-XL codec, advanced parallelism
+  - JPEG-XL codec: Modern high-efficiency compression
+- **v0.3.0** (Planned): Advanced parallelism
 - **v0.4.0** (Planned): GPU acceleration
