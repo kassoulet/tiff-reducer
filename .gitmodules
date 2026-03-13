@@ -2,3 +2,11 @@
 	path = vendor/libtiff
 	url = https://gitlab.com/libtiff/libtiff.git
 	branch = v4.7.0
+
+[submodule "tests/images/exampletiffs"]
+	path = tests/images/exampletiffs
+	url = https://github.com/jeremy-lao/exampletiffs.git
+
+[submodule "tests/images/libtiff-pics"]
+	path = tests/images/libtiff-pics
+	url = https://github.com/ImageMagick/libtiff-pics.git
