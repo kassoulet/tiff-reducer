@@ -143,3 +143,14 @@ pub const TIFFTAG_YCBCRCOEFFICIENTS: u32 = 532;
 // ReferenceWhite values
 pub const YCBCRPOSITION_CENTERED: u16 = 1;
 pub const YCBCRPOSITION_COSITED: u16 = 2;
+
+// CMYK/Ink-related tags
+pub const TIFFTAG_INKSET: u32 = 332;
+pub const TIFFTAG_DOTRANGE: u32 = 336;
+pub const TIFFTAG_INKNAMES: u32 = 340;
+pub const TIFFTAG_NUMBEROFINKS: u32 = 345;
+pub const TIFFTAG_TRANSFERFUNCTION: u32 = 301;
+
+// InkSet values
+pub const INKSET_CMYK: u16 = 1;
+pub const INKSET_MULTIINK: u16 = 2;
