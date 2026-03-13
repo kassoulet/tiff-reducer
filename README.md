@@ -108,6 +108,7 @@ git submodule update --init --recursive
 **Test images location:** `tests/images/`
 - `tests/images/exampletiffs/` - Test images from exampletiffs repository
 - `tests/images/libtiff-pics/` - Test images from libtiff-pics repository
+- `tests/images/image-tiff/` - Test images from image-tiff crate repository
 
 **Manual setup (if submodules fail):**
 ```bash
@@ -118,6 +119,7 @@ mkdir -p tests/images
 cd tests/images
 git clone https://github.com/jeremy-lao/exampletiffs.git
 git clone https://github.com/ImageMagick/libtiff-pics.git
+git clone https://github.com/image-rs/image-tiff.git
 cd ../..
 ```
 

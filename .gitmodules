@@ -10,3 +10,7 @@
 [submodule "tests/images/libtiff-pics"]
 	path = tests/images/libtiff-pics
 	url = https://github.com/ImageMagick/libtiff-pics.git
+
+[submodule "tests/images/image-tiff"]
+	path = tests/images/image-tiff
+	url = https://github.com/image-rs/image-tiff.git
