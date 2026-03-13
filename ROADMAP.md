@@ -45,11 +45,11 @@ This document lists future features and known limitations to address in future r
 ---
 
 ### 4. Multi-Page TIFF (MP-TIFF) Support
-**Status:** ✅ **COMPLETED**
+**Status:** ✅ **COMPLETED** (v0.2.0)
 
 **Issue:** Multi-page TIFF files were skipped during processing.
 
-**Affected files:** `shapes_multi_color.tif`, `shapes_multi_*.tif`, OME-TIFF files
+**Affected files:** `shapes_multi_color.tif`, `shapes_multi_*.tif`
 
 **Solution implemented:**
 - Refactored `run_compression_pass()` to iterate through all IFDs using `TIFFReadDirectory()`
@@ -68,22 +68,33 @@ This document lists future features and known limitations to address in future r
 
 **Note:** GeoTIFF tags are file-level metadata, only copied from first IFD.
 
+**Future Enhancements (v0.3.0):**
+- [ ] Per-page compression settings (different codec per page)
+- [ ] Page selection/range compression (compress only pages 1-5)
+- [ ] Page extraction/splitting (create separate files per page)
+
 ---
 
 ### 5. OME-TIFF Support
-**Status:** ✅ **COMPLETED**
+**Status:** ✅ **COMPLETED** (v0.2.0)
 
 **Issue:** OME-TIFF (Open Microscopy Environment) files have custom metadata.
 
 **Current status:**
 - ✅ Multi-page iteration works (all IFDs are processed)
 - ✅ OME-XML metadata in `TIFFTAG_IMAGEDESCRIPTION` preserved
+- ✅ Tested with `single-channel.ome.tif` - full OME-XML block preserved
 
 **Solution implemented:**
 - Added `TIFFTAG_IMAGEDESCRIPTION` (tag 270) support in `ffi.rs`
 - Added `copy_image_description()` function in `metadata.rs`
 - OME-XML metadata preserved and verified with `tiffinfo`
-- Tested with `single-channel.ome.tif` - full OME-XML block preserved
+
+**Future Enhancements (v0.3.0):**
+- [ ] OME-XML parsing and validation (using `ome-rs` crate)
+- [ ] Support for OME-TIFF 5D data (X, Y, Z, Channel, Time)
+- [ ] OME-XML metadata editing (update dimensions, channels)
+- [ ] Convert OME-TIFF to standard TIFF with preserved metadata
 
 ---
 
