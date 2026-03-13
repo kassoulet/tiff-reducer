@@ -1,11 +1,11 @@
 #!/bin/bash
-# Visual Regression Test for tiffthin-rs
+# Visual Regression Test for tiff-reducer
 # Compares pixel statistics between original and compressed TIFF files
 # Uses GDAL for statistical comparison
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-TIFFTHIN="$PROJECT_DIR/target/debug/tiffthin-rs"
+TIFFTHIN="$PROJECT_DIR/target/debug/tiff-reducer"
 OUTPUT_DIR="/tmp/tiffthin_visual_test"
 
 # Colors
@@ -23,11 +23,11 @@ TOTAL=0
 mkdir -p "$OUTPUT_DIR"
 
 # Build if needed
-echo "Building tiffthin-rs..."
+echo "Building tiff-reducer..."
 cd "$PROJECT_DIR" && cargo build --features vendored 2>&1 | grep -v "^warning\|^   Compiling\|^     Finished" || true
 
 if [ ! -f "$TIFFTHIN" ]; then
-    echo -e "${RED}Error: tiffthin-rs not found${NC}"
+    echo -e "${RED}Error: tiff-reducer not found${NC}"
     exit 1
 fi
 

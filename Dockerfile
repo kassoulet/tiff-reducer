@@ -1,39 +1,40 @@
-# Builder stage - Use Alpine for native musl support
-FROM rust:alpine as builder
+# Builder stage - Use Debian for standard dynamic library support
+FROM rust:bookworm as builder
 
-# Install build dependencies (Alpine uses musl natively)
-RUN apk add --no-cache \
-    build-base \
+# Install build dependencies for dynamic linking
+RUN apt-get update && apt-get install -y \
     cmake \
     git \
-    pkgconfig \
-    tiff-dev \
-    zstd-dev \
-    xz-dev \
-    zlib-dev \
-    libjpeg-turbo-dev \
+    pkg-config \
+    libtiff-dev \
+    libzstd-dev \
+    liblzma-dev \
+    libjpeg-dev \
     libwebp-dev \
-    libdeflate-dev
+    libdeflate-dev \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /usr/src/tiffthin-rs
+WORKDIR /usr/src/tiff-reducer
 COPY . .
 
-# Build with vendored libtiff for maximum static linking
-# Note: Alpine's musl libc is used, but some dynamic linking may occur
-RUN cargo build --release --features vendored
+# Build without 'vendored' feature to link against system libraries
+RUN cargo build --release
 
-# Final stage - use Alpine base for runtime libraries
-FROM alpine:latest
+# Final stage - use Debian slim for small runtime image
+FROM debian:bookworm-slim
 
-RUN apk add --no-cache \
-    tiff \
-    libwebp \
-    zstd \
-    xz \
-    zlib \
-    libjpeg-turbo \
-    libdeflate
+# Install runtime libraries
+RUN apt-get update && apt-get install -y \
+    libtiff6 \
+    libzstd1 \
+    liblzma5 \
+    libjpeg62-turbo \
+    libwebp7 \
+    libdeflate0 \
+    zlib1g \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/src/tiffthin-rs/target/release/tiffthin-rs /tiffthin-rs
+COPY --from=builder /usr/src/tiff-reducer/target/release/tiff-reducer /usr/local/bin/tiff-reducer
 
-ENTRYPOINT ["/tiffthin-rs"]
+ENTRYPOINT ["tiff-reducer"]

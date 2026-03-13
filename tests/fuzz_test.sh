@@ -1,12 +1,12 @@
 #!/bin/bash
-# Fuzz Testing for tiffthin-rs
+# Fuzz Testing for tiff-reducer
 # Tests error handling with malformed/corrupted TIFF files
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-TIFFTHIN="$PROJECT_DIR/target/debug/tiffthin-rs"
+TIFFTHIN="$PROJECT_DIR/target/debug/tiff-reducer"
 FUZZ_DIR="/tmp/tiffthin_fuzz_test"
 
 # Colors
@@ -23,11 +23,11 @@ TOTAL=0
 mkdir -p "$FUZZ_DIR"
 
 # Build if needed
-echo "Building tiffthin-rs..."
+echo "Building tiff-reducer..."
 cd "$PROJECT_DIR" && cargo build --features vendored 2>&1 | grep -v "^warning\|^   Compiling\|^     Finished" || true
 
 if [ ! -f "$TIFFTHIN" ]; then
-    echo -e "${RED}Error: tiffthin-rs not found${NC}"
+    echo -e "${RED}Error: tiff-reducer not found${NC}"
     exit 1
 fi
 
@@ -88,7 +88,7 @@ test_malformed_file() {
     
     TOTAL=$((TOTAL + 1))
     
-    # Run tiffthin-rs and capture exit code (strip progress bar characters)
+    # Run tiff-reducer and capture exit code (strip progress bar characters)
     local result
     result=$("$TIFFTHIN" compress "$input" -o "$output" 2>&1 | tr -d '\r' | grep -v "^⠁" || true)
     
