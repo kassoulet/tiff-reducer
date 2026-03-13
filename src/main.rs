@@ -70,6 +70,9 @@ enum CompressionFormat {
     Deflate,
     Jpeg,
     Webp,
+    Lerc,
+    LercDeflate,
+    LercZstd,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -108,6 +111,9 @@ impl std::fmt::Display for CompressionFormat {
             CompressionFormat::Deflate => write!(f, "Deflate"),
             CompressionFormat::Jpeg => write!(f, "JPEG"),
             CompressionFormat::Webp => write!(f, "WebP"),
+            CompressionFormat::Lerc => write!(f, "LERC"),
+            CompressionFormat::LercDeflate => write!(f, "LERC-Deflate"),
+            CompressionFormat::LercZstd => write!(f, "LERC-Zstd"),
         }
     }
 }
@@ -121,6 +127,9 @@ impl CompressionFormat {
             CompressionFormat::Deflate => COMPRESSION_ADOBE_DEFLATE,
             CompressionFormat::Jpeg => COMPRESSION_JPEG,
             CompressionFormat::Webp => COMPRESSION_WEBP,
+            CompressionFormat::Lerc => COMPRESSION_LERC,
+            CompressionFormat::LercDeflate => COMPRESSION_LERC_DEFLATE,
+            CompressionFormat::LercZstd => COMPRESSION_LERC_ZSTD,
         }
     }
 }
