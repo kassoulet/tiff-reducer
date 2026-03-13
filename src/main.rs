@@ -510,6 +510,9 @@ unsafe fn process_single_ifd(
     // Copy CMYK/Ink-related tags if present
     crate::metadata::copy_cmyk_tags(tif_src, tif_dst);
 
+    // Copy ImageDescription tag (for OME-XML metadata)
+    crate::metadata::copy_image_description(tif_src, tif_dst);
+
     if quantize {
         TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, 8u32);
         TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT as u32);

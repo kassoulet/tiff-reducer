@@ -47,23 +47,19 @@ This document lists missing features, problematic formats, and known limitations
 ---
 
 ### 3. OME-TIFF Support
-**Status:** Partially completed (multi-page support done, OME-XML pending)
+**Status:** ✅ **COMPLETED**
 
 **Issue:** OME-TIFF (Open Microscopy Environment) files have custom metadata.
 
 **Current status:**
-- ✅ Multi-page iteration now works (all IFDs are processed)
-- ❌ OME-XML metadata in `TIFFTAG_IMAGEDESCRIPTION` not yet preserved
+- ✅ Multi-page iteration works (all IFDs are processed)
+- ✅ OME-XML metadata in `TIFFTAG_IMAGEDESCRIPTION` preserved
 
-**Problem:**
-- OME-TIFF uses custom metadata and multi-page structure
-- May contain 5D image data (X, Y, Z, Channel, Time)
-- Requires preserving OME-XML metadata
-
-**Solution:**
-- Read and preserve OME-XML from `TIFFTAG_IMAGEDESCRIPTION`
-- Handle multi-dimensional image stacks
-- Consider using `ome-rs` crate for OME-XML parsing
+**Solution implemented:**
+- Added `TIFFTAG_IMAGEDESCRIPTION` (tag 270) support in `ffi.rs`
+- Added `copy_image_description()` function in `metadata.rs`
+- OME-XML metadata preserved and verified with `tiffinfo`
+- Tested with `single-channel.ome.tif` - full OME-XML block preserved
 
 ---
 
@@ -248,7 +244,7 @@ pub const COMPRESSION_LERC_ZSTD: u16 = 50004;
 ## Version History
 
 - **v0.1.0**: Basic compression, Zstd/LZMA/Deflate, tiled support, colormap preservation
-- **v0.2.0** (Current): Alpha channel (ExtraSamples), multi-page TIFF, GeoTIFF, ICC profile, YCbCr, CMYK support
+- **v0.2.0** (Current): Alpha channel, multi-page TIFF, GeoTIFF, ICC, YCbCr, CMYK, OME-XML support
   - Test results: 27 passed, 0 failed, 29 skipped (out of 56 files)
-- **v0.3.0** (Planned): OME-XML metadata preservation, visual regression testing
-- **v0.4.0** (Planned): Performance benchmarks, fuzz testing
+- **v0.3.0** (Planned): Visual regression testing, performance benchmarks
+- **v0.4.0** (Planned): Fuzz testing, additional codec support
