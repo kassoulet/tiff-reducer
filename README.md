@@ -109,6 +109,18 @@ git submodule update --init --recursive
 - `tests/images/exampletiffs/` - Test images from exampletiffs repository
 - `tests/images/libtiff-pics/` - Test images from libtiff-pics repository
 
+**Manual setup (if submodules fail):**
+```bash
+# Create test images directory
+mkdir -p tests/images
+
+# Download test images manually
+cd tests/images
+git clone https://github.com/jeremy-lao/exampletiffs.git
+git clone https://github.com/ImageMagick/libtiff-pics.git
+cd ../..
+```
+
 ## Usage
 
 ### Compress a file (Overwrites by default)
