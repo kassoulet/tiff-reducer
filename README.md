@@ -1,15 +1,40 @@
 # TiffThin-RS 🐘
 
-A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency codecs (Zstd/LZMA) while strictly preserving all metadata (GeoTIFF, GDAL, etc.).
+A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency codecs (Zstd/LZMA/LERC) while strictly preserving all metadata (GeoTIFF, ICC, OME-XML, etc.).
 
 ## Features
 
-- **Direct `libtiff` Integration**: Uses FFI to interface with the system's `libtiff`, supporting advanced features like **Predictor 3 (Floating Point)** and **LZMA**.
-- **Metadata Integrity (Tag Pipe)**: Iterates through all tags and explicitly preserves GeoTIFF keys and GDAL-specific tags.
-- **Quantization Engine**: Convert `float32` and `int16` images to `uint8` using Min-Max scaling.
-- **Extreme Mode (Compression Tournament)**: Benchmarks multiple compression formats (Zstd, LZMA, LZW, Deflate) in parallel to find the smallest file size.
-- **BigTIFF Support**: Automatically handles files exceeding 4GB.
-- **Static Binary**: Produced via a multi-stage Docker build for zero-dependency deployment.
+### Compression
+- **Multiple Codecs**: Zstd, LZMA, Deflate, LZW, JPEG, WebP, LERC (with variants)
+- **Compression Levels**: Zstd (1-22), Deflate/LZMA (1-9), JPEG/WebP (1-100)
+- **Predictors**: None, Horizontal, Floating Point (for float32 data)
+- **SIMD Optimizations**: SSE4.2/AVX2 (x86_64) or NEON (ARM64) for ~12% speedup
+- **Extreme Mode**: Benchmarks all formats to find the smallest file size
+
+### Metadata Preservation
+- **GeoTIFF**: Tags 33550, 33922, 34735, 34736, 34737 (ModelPixelScale, ModelTiepoint, GeoKeyDirectory, etc.)
+- **ICC Profiles**: Full color profile preservation (tag 34675)
+- **Alpha Channels**: ExtraSamples tag (#338) for proper alpha interpretation
+- **YCbCr**: Subsampling, positioning, and conversion coefficients
+- **CMYK**: InkSet, DotRange, InkNames, NumberOfInks
+- **OME-XML**: ImageDescription tag for microscopy data
+- **Colormap**: Palette/colormap preservation for indexed images
+
+### File Support
+- **Multi-page TIFF**: Iterates through all IFDs (pages)
+- **Tiled TIFF**: Auto-detection and tiled processing
+- **BigTIFF**: Automatic handling of files >4GB
+- **Quantization**: Convert float32/int16 to uint8
+
+### Testing & Quality
+- **Visual Regression**: GDAL-based pixel statistics comparison
+- **Fuzz Testing**: 18 malformed file scenarios for error handling
+- **Benchmark Mode**: `--benchmark` flag for timing/throughput metrics
+
+## Test Results
+- **Metadata tests**: 27 passed, 0 failed, 29 skipped (56 files)
+- **Visual tests**: 6/6 passed (lossless pixel-perfect compression)
+- **Fuzz tests**: 16/18 passed (graceful error handling)
 
 ## Installation
 
@@ -73,9 +98,25 @@ For a **fully static binary** (no glibc dependency), use the Docker build or com
 tiffthin-rs compress image.tif
 ```
 
+### With specific format and level
+```bash
+tiffthin-rs compress input.tif --output optimized.tif --format zstd --level 22
+```
+
 ### Extreme Optimization with Quantization
 ```bash
 tiffthin-rs compress input.tif --output optimized.tif --extreme --quantize
+```
+
+### Benchmark Mode (timing and throughput)
+```bash
+tiffthin-rs compress input.tif --output optimized.tif --benchmark
+```
+
+### LERC Compression (for scientific data)
+```bash
+tiffthin-rs compress input.tif --output optimized.tif --format lerc
+tiffthin-rs compress input.tif --output optimized.tif --format lerc-zstd
 ```
 
 ### Analyze Metadata
@@ -92,9 +133,11 @@ tiffthin-rs compress ./input_folder --output ./output_folder --extreme
 
 ### `compress`
 - `-o, --output <PATH>`: Specify output file or directory.
-- `-f, --format <FORMAT>`: Manually choose format (`zstd`, `lzma`, `lzw`, `deflate`, `jpeg`, `webp`).
+- `-f, --format <FORMAT>`: Manually choose format (`zstd`, `lzma`, `lzw`, `deflate`, `jpeg`, `webp`, `lerc`, `lerc-deflate`, `lerc-zstd`).
+- `-l, --level <LEVEL>`: Compression level (Zstd: 1-22, Deflate/LZMA: 1-9, JPEG/WebP: 1-100).
 - `--extreme`: Try all formats and pick the winner.
 - `--quantize`: Convert to 8-bit uint.
+- `--benchmark`: Display timing and throughput metrics.
 - `--dry-run`: Benchmark without writing to disk.
 
 ### `analyze`
