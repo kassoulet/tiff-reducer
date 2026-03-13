@@ -50,6 +50,10 @@ enum Commands {
         /// Perform compression but do not write to disk
         #[arg(long)]
         dry_run: bool,
+
+        /// Run benchmark mode with timing and throughput metrics
+        #[arg(long)]
+        benchmark: bool,
     },
     /// Analyze a TIFF file and display metadata
     Analyze {
@@ -133,8 +137,8 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Analyze { file } => analyze_file(&file),
-        Commands::Compress { input, output, format, level, quantize, extreme, dry_run } => {
-            compress_command(input, output, format, level, quantize, extreme, dry_run)
+        Commands::Compress { input, output, format, level, quantize, extreme, dry_run, benchmark } => {
+            compress_command(input, output, format, level, quantize, extreme, dry_run, benchmark)
         }
     }
 }
@@ -181,7 +185,7 @@ fn analyze_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn compress_command(input: PathBuf, output: Option<PathBuf>, format: CompressionFormat, level: Option<u32>, quantize: bool, extreme: bool, dry_run: bool) -> Result<()> {
+fn compress_command(input: PathBuf, output: Option<PathBuf>, format: CompressionFormat, level: Option<u32>, quantize: bool, extreme: bool, dry_run: bool, benchmark: bool) -> Result<()> {
     // Set default compression level for Zstd if not specified (libtiff 4.7+)
     let level = level.or_else(|| {
         if format == CompressionFormat::Zstd {
@@ -221,7 +225,7 @@ fn compress_command(input: PathBuf, output: Option<PathBuf>, format: Compression
             file_path.clone()
         };
 
-        match process_single_file(file_path, &target_output, format, level, quantize, extreme, dry_run, &pb) {
+        match process_single_file(file_path, &target_output, format, level, quantize, extreme, dry_run, benchmark, &pb) {
             Ok((original, compressed, best_fmt)) => {
                 pb.set_position(100);
                 pb.finish_with_message("Done");
@@ -265,8 +269,9 @@ fn compress_command(input: PathBuf, output: Option<PathBuf>, format: Compression
     Ok(())
 }
 
-fn process_single_file(input: &Path, output: &Path, format: CompressionFormat, level: Option<u32>, quantize: bool, extreme: bool, dry_run: bool, pb: &ProgressBar) -> Result<(u64, u64, String)> {
+fn process_single_file(input: &Path, output: &Path, format: CompressionFormat, level: Option<u32>, quantize: bool, extreme: bool, dry_run: bool, benchmark: bool, pb: &ProgressBar) -> Result<(u64, u64, String)> {
     let original_size = fs::metadata(input)?.len();
+    let start_time = std::time::Instant::now();
 
     let formats = if extreme {
         vec![
@@ -361,6 +366,28 @@ fn process_single_file(input: &Path, output: &Path, format: CompressionFormat, l
     run_compression_pass(input, output, cid, pid, level, quantize)?;
 
     let compressed_size = fs::metadata(output)?.len();
+    let elapsed = start_time.elapsed();
+
+    // Display benchmark results if requested
+    if benchmark {
+        let throughput_mbs = if elapsed.as_secs_f64() > 0.0 {
+            (original_size as f64 / 1048576.0) / elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+        let ratio = if original_size > 0 {
+            (1.0 - (compressed_size as f64 / original_size as f64)) * 100.0
+        } else {
+            0.0
+        };
+        println!("\n[{}] Benchmark Results:", input.file_name().unwrap().to_string_lossy());
+        println!("  Original size:   {} bytes", original_size);
+        println!("  Compressed size: {} bytes", compressed_size);
+        println!("  Compression:     {:.1}% reduction", ratio);
+        println!("  Time elapsed:    {:.3}s", elapsed.as_secs_f64());
+        println!("  Throughput:      {:.2} MB/s", throughput_mbs);
+    }
+
     Ok((original_size, compressed_size, format!("{best_format}+{best_predictor}")))
 }
 
