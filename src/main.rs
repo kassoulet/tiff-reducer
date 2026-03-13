@@ -614,6 +614,7 @@ unsafe fn process_single_ifd(
 /// Process a strip-based TIFF image
 /// Note: Parallelism is handled at the file level (multiple files processed in parallel)
 /// Per-file parallelism would require separate TIFF handles per thread
+#[allow(unused_variables)]
 unsafe fn process_striped_image(
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
@@ -656,6 +657,7 @@ unsafe fn process_striped_image(
 /// Process a tiled TIFF image
 /// Note: Parallelism is handled at the file level (multiple files processed in parallel)
 /// Per-file parallelism would require separate TIFF handles per thread
+#[allow(unused_variables)]
 unsafe fn process_tiled_image(
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
