@@ -103,7 +103,7 @@ fn build_zlib(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include_dir: 
     cfg.build();
 }
 
-fn build_libjpeg(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include_dir: &Path, target: &str) {
+fn build_libjpeg(out_dir: &Path, manifest_dir: &Path, _lib_dir: &Path, _include_dir: &Path, target: &str) {
     let source_dir = clone_or_use(out_dir, manifest_dir, "libjpeg-turbo", "https://github.com/libjpeg-turbo/libjpeg-turbo.git", "3.1.0");
 
     let mut cfg = cmake::Config::new(&source_dir);
@@ -132,7 +132,7 @@ fn build_libjpeg(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include_di
     cfg.build();
 }
 
-fn build_libdeflate(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include_dir: &Path, target: &str) {
+fn build_libdeflate(out_dir: &Path, manifest_dir: &Path, _lib_dir: &Path, _include_dir: &Path, target: &str) {
     let source_dir = clone_or_use(out_dir, manifest_dir, "libdeflate", "https://github.com/ebiggers/libdeflate.git", "v1.22");
 
     let mut cfg = cmake::Config::new(&source_dir);
@@ -160,7 +160,7 @@ fn build_libdeflate(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include
     cfg.build();
 }
 
-fn build_libzstd(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include_dir: &Path, target: &str) {
+fn build_libzstd(out_dir: &Path, manifest_dir: &Path, _lib_dir: &Path, _include_dir: &Path, target: &str) {
     let source_dir = clone_or_use(out_dir, manifest_dir, "zstd", "https://github.com/facebook/zstd.git", "v1.5.6");
 
     let mut cfg = cmake::Config::new(&source_dir.join("build/cmake"));
@@ -187,7 +187,7 @@ fn build_libzstd(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include_di
     cfg.build();
 }
 
-fn build_liblzma(out_dir: &Path, manifest_dir: &Path, lib_dir: &Path, include_dir: &Path, target: &str) {
+fn build_liblzma(out_dir: &Path, manifest_dir: &Path, _lib_dir: &Path, _include_dir: &Path, target: &str) {
     let source_dir = clone_or_use(out_dir, manifest_dir, "xz", "https://github.com/tukaani-project/xz.git", "v5.6.3");
     
     let mut cfg = cmake::Config::new(&source_dir);

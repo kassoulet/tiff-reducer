@@ -1,5 +1,5 @@
 use crate::ffi::*;
-use libc::{c_char, c_void};
+use libc::c_char;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -400,7 +400,7 @@ unsafe fn copy_tag_float(src: *mut TIFF, dst: *mut TIFF, tag: u32) {
     }
 }
 
-unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF, geotiff_data: &GeoTiffData) {
+unsafe fn copy_geotiff_tags(_src: *mut TIFF, dst: *mut TIFF, geotiff_data: &GeoTiffData) {
     // ModelPixelScaleTag (33550) - array of doubles
     if let Some(ref data) = geotiff_data.model_pixel_scale {
         TIFFSetField(dst, TIFFTAG_MODELPIXELSCALETAG, data.len() as u32, data.as_ptr());
@@ -423,7 +423,9 @@ unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF, geotiff_data: &GeoTi
 
     // GeoAsciiParamsTag (34737) - ASCII string
     if let Some(ref data) = geotiff_data.geo_ascii_params {
-        let c_str = std::ffi::CString::new(data.as_str()).unwrap();
-        TIFFSetField(dst, TIFFTAG_GEOASCIIPARAMSTAG, c_str.as_ptr());
+        // Safely create CString, ignoring invalid UTF-8
+        if let Ok(c_str) = std::ffi::CString::new(data.as_str()) {
+            TIFFSetField(dst, TIFFTAG_GEOASCIIPARAMSTAG, c_str.as_ptr());
+        }
     }
 }
