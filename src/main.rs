@@ -230,15 +230,6 @@ fn compress_command(
     benchmark: bool,
     jobs: Option<usize>,
 ) -> Result<()> {
-    // Set default compression level for Zstd if not specified (libtiff 4.7+)
-    let level = level.or_else(|| {
-        if format == CompressionFormat::Zstd {
-            Some(19) // Default Zstd level for better compression
-        } else {
-            None
-        }
-    });
-
     let files = if input.is_dir() {
         fs::read_dir(&input)?
             .filter_map(|e| e.ok())
@@ -691,28 +682,33 @@ unsafe fn process_single_ifd(
     TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, predictor as u32);
 
     // Set compression level after compression is set (codec-specific)
-    if let Some(lvl) = level {
-        match compression {
-            COMPRESSION_ZSTD => {
-                let clamped: i32 = lvl.clamp(1, 22) as i32;
-                TIFFSetField(tif_dst, TIFFTAG_ZSTD_LEVEL, clamped);
-            }
-            COMPRESSION_ADOBE_DEFLATE | COMPRESSION_LZW => {
+    match compression {
+        COMPRESSION_ZSTD => {
+            let lvl = level.unwrap_or(19);
+            let clamped: i32 = lvl.clamp(1, 22) as i32;
+            TIFFSetField(tif_dst, TIFFTAG_ZSTD_LEVEL, clamped);
+        }
+        COMPRESSION_ADOBE_DEFLATE | COMPRESSION_LZW => {
+            if let Some(lvl) = level {
                 let clamped: i32 = lvl.clamp(1, 9) as i32;
                 TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, clamped);
             }
-            COMPRESSION_LZMA => {
+        }
+        COMPRESSION_LZMA => {
+            if let Some(lvl) = level {
                 let clamped: i32 = lvl.clamp(1, 9) as i32;
                 TIFFSetField(tif_dst, TIFFTAG_LZMAPRESET, clamped);
             }
-            COMPRESSION_JPEGXL => {
+        }
+        COMPRESSION_JPEGXL => {
+            if let Some(lvl) = level {
                 // JPEG-XL quality level (1-100, default 75)
                 let clamped: i32 = lvl.clamp(1, 100) as i32;
                 // JPEG-XL uses the same tag as JPEG for quality
                 TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, clamped);
             }
-            _ => {}
         }
+        _ => {}
     }
 
     // Check if source is tiled

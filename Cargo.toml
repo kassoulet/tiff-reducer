@@ -28,3 +28,10 @@ cmake = "0.1"
 default = []
 # Build libtiff and dependencies from source for static linking
 vendored = []
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
