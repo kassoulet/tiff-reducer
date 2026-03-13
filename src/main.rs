@@ -54,6 +54,10 @@ enum Commands {
         /// Run benchmark mode with timing and throughput metrics
         #[arg(long)]
         benchmark: bool,
+
+        /// Number of parallel jobs for file-level processing (default: number of CPUs)
+        #[arg(short, long)]
+        jobs: Option<usize>,
     },
     /// Analyze a TIFF file and display metadata
     Analyze {
@@ -149,8 +153,8 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Analyze { file } => analyze_file(&file),
-        Commands::Compress { input, output, format, level, quantize, extreme, dry_run, benchmark } => {
-            compress_command(input, output, format, level, quantize, extreme, dry_run, benchmark)
+        Commands::Compress { input, output, format, level, quantize, extreme, dry_run, benchmark, jobs } => {
+            compress_command(input, output, format, level, quantize, extreme, dry_run, benchmark, jobs)
         }
     }
 }
@@ -197,7 +201,7 @@ fn analyze_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn compress_command(input: PathBuf, output: Option<PathBuf>, format: CompressionFormat, level: Option<u32>, quantize: bool, extreme: bool, dry_run: bool, benchmark: bool) -> Result<()> {
+fn compress_command(input: PathBuf, output: Option<PathBuf>, format: CompressionFormat, level: Option<u32>, quantize: bool, extreme: bool, dry_run: bool, benchmark: bool, jobs: Option<usize>) -> Result<()> {
     // Set default compression level for Zstd if not specified (libtiff 4.7+)
     let level = level.or_else(|| {
         if format == CompressionFormat::Zstd {
@@ -219,7 +223,10 @@ fn compress_command(input: PathBuf, output: Option<PathBuf>, format: Compression
 
     let m = MultiProgress::new();
 
-    files.par_iter().for_each(|file_path| {
+    // Use rayon for file-level parallelism with configurable job count
+    let num_jobs = jobs.unwrap_or_else(|| num_cpus::get());
+    
+    files.par_iter().with_max_len(num_jobs).for_each(|file_path| {
         let pb = m.add(ProgressBar::new(100));
         pb.set_style(ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] {msg} [{bar:40.cyan/blue}] {pos}%")

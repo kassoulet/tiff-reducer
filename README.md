@@ -113,6 +113,11 @@ tiffthin-rs compress input.tif --output optimized.tif --extreme --quantize
 tiffthin-rs compress input.tif --output optimized.tif --benchmark
 ```
 
+### Control Parallelism (default: number of CPUs)
+```bash
+tiffthin-rs compress ./input_folder --output ./output_folder --jobs 4
+```
+
 ### LERC Compression (for scientific data)
 ```bash
 tiffthin-rs compress input.tif --output optimized.tif --format lerc
@@ -133,11 +138,12 @@ tiffthin-rs compress ./input_folder --output ./output_folder --extreme
 
 ### `compress`
 - `-o, --output <PATH>`: Specify output file or directory.
-- `-f, --format <FORMAT>`: Manually choose format (`zstd`, `lzma`, `lzw`, `deflate`, `jpeg`, `webp`, `lerc`, `lerc-deflate`, `lerc-zstd`).
+- `-f, --format <FORMAT>`: Manually choose format (`zstd`, `lzma`, `lzw`, `deflate`, `jpeg`, `webp`, `lerc`, `lerc-deflate`, `lerc-zstd`, `jpeg-xl`).
 - `-l, --level <LEVEL>`: Compression level (Zstd: 1-22, Deflate/LZMA: 1-9, JPEG/WebP: 1-100).
 - `--extreme`: Try all formats and pick the winner.
 - `--quantize`: Convert to 8-bit uint.
 - `--benchmark`: Display timing and throughput metrics.
+- `-j, --jobs <JOBS>`: Number of parallel jobs (default: number of CPUs).
 - `--dry-run`: Benchmark without writing to disk.
 
 ### `analyze`
