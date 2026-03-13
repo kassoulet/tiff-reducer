@@ -307,6 +307,16 @@ pub unsafe fn copy_cmyk_tags(src: *mut TIFF, dst: *mut TIFF) {
     }
 }
 
+/// Copy ImageDescription tag (used for OME-XML metadata)
+pub unsafe fn copy_image_description(src: *mut TIFF, dst: *mut TIFF) {
+    let mut desc: *mut i8 = std::ptr::null_mut();
+    if TIFFGetField(src, TIFFTAG_IMAGEDESCRIPTION, &mut desc) != 0 {
+        if !desc.is_null() {
+            TIFFSetField(dst, TIFFTAG_IMAGEDESCRIPTION, desc);
+        }
+    }
+}
+
 /// Public FFI version - registers GeoTIFF tags for reading/writing
 /// Must be called immediately after opening a TIFF file
 pub unsafe fn register_geotiff_tags_ffi(tif: *mut TIFF) {
