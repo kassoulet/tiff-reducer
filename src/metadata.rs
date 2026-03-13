@@ -253,6 +253,30 @@ pub unsafe fn copy_icc_profile(src: *mut TIFF, dst: *mut TIFF) {
     }
 }
 
+/// Copy YCbCr color space tags
+pub unsafe fn copy_ycbcr_tags(src: *mut TIFF, dst: *mut TIFF) {
+    // YCbCrSubsampling (two SHORT values: horizontal, vertical)
+    let mut h_sub: u16 = 0;
+    let mut v_sub: u16 = 0;
+    if TIFFGetField(src, TIFFTAG_YCBCRSUBSAMPLING, &mut h_sub, &mut v_sub) != 0 {
+        TIFFSetField(dst, TIFFTAG_YCBCRSUBSAMPLING, h_sub as u32, v_sub as u32);
+    }
+
+    // YCbCrPositioning (single SHORT value)
+    let mut positioning: u16 = 0;
+    if TIFFGetField(src, TIFFTAG_YCBCRPOSITION, &mut positioning) != 0 {
+        TIFFSetField(dst, TIFFTAG_YCBCRPOSITION, positioning as u32);
+    }
+
+    // YCbCrCoefficients (three FLOAT values)
+    let mut coeff_r: f32 = 0.0;
+    let mut coeff_g: f32 = 0.0;
+    let mut coeff_b: f32 = 0.0;
+    if TIFFGetField(src, TIFFTAG_YCBCRCOEFFICIENTS, &mut coeff_r, &mut coeff_g, &mut coeff_b) != 0 {
+        TIFFSetField(dst, TIFFTAG_YCBCRCOEFFICIENTS, coeff_r as f64, coeff_g as f64, coeff_b as f64);
+    }
+}
+
 /// Public FFI version - registers GeoTIFF tags for reading/writing
 /// Must be called immediately after opening a TIFF file
 pub unsafe fn register_geotiff_tags_ffi(tif: *mut TIFF) {
