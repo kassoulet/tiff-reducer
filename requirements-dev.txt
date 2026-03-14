@@ -1,0 +1,13 @@
+# Development dependencies for tiff-reducer
+# Install with: pip install -r requirements-dev.txt
+
+# Code formatting
+black>=24.0.0
+
+# Linting
+pylint>=3.0.0
+
+# Testing dependencies (for Python test scripts)
+gdal>=3.6.0
+numpy>=1.24.0
+pillow>=10.0.0
