@@ -1,0 +1,61 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+    -   id: trailing-whitespace
+    -   id: end-of-file-fixer
+    -   id: check-yaml
+    -   id: check-added-large-files
+        args: ['--maxkb=1024']
+
+-   repo: local
+    hooks:
+    -   id: cargo-check
+        name: Cargo Check
+        entry: cargo check
+        language: system
+        types: [rust]
+        pass_filenames: false
+        always_run: true
+
+    -   id: cargo-clippy
+        name: Cargo Clippy
+        entry: cargo clippy -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+        always_run: true
+
+    -   id: cargo-fmt
+        name: Cargo Format
+        entry: cargo fmt -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+        always_run: true
+
+    -   id: cargo-test
+        name: Cargo Test (Error Handling)
+        entry: cargo test --test integration_tests handling
+        language: system
+        types: [rust]
+        pass_filenames: false
+        always_run: true
+
+    -   id: black
+        name: Black (Python Formatter)
+        entry: black
+        language: system
+        types: [python]
+        args: [--check, --diff]
+        require_serial: true
+
+    -   id: pylint
+        name: Pylint
+        entry: pylint
+        language: system
+        types: [python]
+        args: [--errors-only]
+        require_serial: true

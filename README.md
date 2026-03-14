@@ -215,6 +215,37 @@ tiff-reducer compress ./input_folder --output ./output_folder --extreme
 ### `analyze`
 - Displays dimensions, channels, bit depth, format, and current compression.
 
+## Development
+
+### Pre-commit Hooks
+
+This project uses [pre-commit](https://pre-commit.com/) to enforce code quality standards.
+
+**Setup:**
+```bash
+# Install pre-commit
+pip install pre-commit
+
+# Install Python development dependencies
+pip install -r requirements-dev.txt
+
+# Install git hooks
+pre-commit install
+```
+
+**Hooks configured:**
+- `cargo check` - Rust compilation check
+- `cargo clippy` - Rust linter (warnings as errors)
+- `cargo fmt` - Rust code formatting
+- `cargo test` - Rust integration tests (error handling)
+- `black` - Python code formatting
+- `pylint` - Python linter (errors only)
+
+**Manual run:**
+```bash
+pre-commit run --all-files
+```
+
 ## License
 MIT
 
