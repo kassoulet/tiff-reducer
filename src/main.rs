@@ -599,35 +599,65 @@ unsafe fn process_single_ifd(
         return Err(anyhow!("Failed to read image dimensions"));
     }
 
-    if is_first_page {
-        clone_metadata(tif_src, tif_dst);
-    }
-
+    // Get source image parameters first
     let mut bps = 0u16;
     let mut spp = 0u16;
     let mut fmt = 0u16;
+    let mut photometric: u16 = 0;
+    let mut planar: u16 = 0;
+    
     TIFFGetField(tif_src, TIFFTAG_BITSPERSAMPLE, &mut bps);
     TIFFGetField(tif_src, TIFFTAG_SAMPLESPERPIXEL, &mut spp);
     TIFFGetField(tif_src, TIFFTAG_SAMPLEFORMAT, &mut fmt);
+    let has_photometric = TIFFGetField(tif_src, TIFFTAG_PHOTOMETRIC, &mut photometric) != 0;
+    let has_planar = TIFFGetField(tif_src, TIFFTAG_PLANARCONFIG, &mut planar) != 0;
 
+    // Handle invalid/missing samples per pixel
+    if spp == 0 {
+        spp = 1; // Default to 1 sample per pixel
+    }
+    
+    // Handle missing photometric (default to minisblack for grayscale)
+    if photometric == 0 {
+        photometric = PHOTOMETRIC_MINISBLACK;
+    }
+    
+    // Handle missing planar config (default to contiguous)
+    if planar == 0 {
+        planar = PLANARCONFIG_CONTIG;
+    }
+    
+    // Check if source is tiled before we start processing
+    let is_tiled = crate::ffi::TIFFIsTiled(tif_src) != 0;
+
+    // Skip metadata cloning for now to avoid tag conflicts
+    // We'll set all required tags individually
+    // if is_first_page {
+    //     clone_metadata(tif_src, tif_dst);
+    // }
+
+    // Set required tags for this IFD (override cloned values for current page)
     TIFFSetField(tif_dst, TIFFTAG_IMAGEWIDTH, w);
     TIFFSetField(tif_dst, TIFFTAG_IMAGELENGTH, h);
-    TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, bps as u32);
+    
+    // Apply quantization before setting bits per sample
+    let final_bps = if quantize { 8 } else { bps };
+    let final_fmt = if quantize { SAMPLEFORMAT_UINT } else { fmt };
+
+    TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, final_bps as u32);
     TIFFSetField(tif_dst, TIFFTAG_SAMPLESPERPIXEL, spp as u32);
-    if fmt != 0 {
-        TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, fmt as u32);
+    if final_fmt != 0 {
+        TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, final_fmt as u32);
     }
-
-    let mut photometric: u16 = 0;
-    if TIFFGetField(tif_src, TIFFTAG_PHOTOMETRIC, &mut photometric) != 0 {
-        TIFFSetField(tif_dst, TIFFTAG_PHOTOMETRIC, photometric as u32);
-    }
-
-    let mut planar: u16 = 0;
-    if TIFFGetField(tif_src, TIFFTAG_PLANARCONFIG, &mut planar) != 0 {
+    TIFFSetField(tif_dst, TIFFTAG_PHOTOMETRIC, photometric as u32);
+    // Only set PLANARCONFIG if source had it
+    if planar != 0 {
         TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32);
     }
+    
+    // Note: We don't set RowsPerStrip explicitly - libtiff will calculate it automatically
 
+    // Resolution tags (optional but commonly present)
     let mut xres: f32 = 0.0;
     let mut yres: f32 = 0.0;
     let mut resunit: u16 = 0;
@@ -641,45 +671,59 @@ unsafe fn process_single_ifd(
         TIFFSetField(tif_dst, TIFFTAG_RESOLUTIONUNIT, resunit as u32);
     }
 
-    if quantize {
-        TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, 8u32);
-        TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT as u32);
-    }
-
     TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as u32);
-    TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, predictor as u32);
-
-    // Set compression level after compression is set (codec-specific)
-    match compression {
-        COMPRESSION_ZSTD => {
-            let lvl = level.unwrap_or(19);
-            let clamped: i32 = lvl.clamp(1, 22) as i32;
-            TIFFSetField(tif_dst, TIFFTAG_ZSTD_LEVEL, clamped);
-        }
-        COMPRESSION_ADOBE_DEFLATE | COMPRESSION_LZW => {
-            if let Some(lvl) = level {
+    
+    // Set compression level immediately after compression codec
+    if let Some(lvl) = level {
+        match compression {
+            COMPRESSION_ZSTD => {
+                let clamped: i32 = lvl.clamp(1, 22) as i32;
+                TIFFSetField(tif_dst, TIFFTAG_ZSTD_LEVEL, clamped);
+            }
+            COMPRESSION_ADOBE_DEFLATE | COMPRESSION_LZW => {
                 let clamped: i32 = lvl.clamp(1, 9) as i32;
                 TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, clamped);
             }
-        }
-        COMPRESSION_LZMA => {
-            if let Some(lvl) = level {
+            COMPRESSION_LZMA => {
                 let clamped: i32 = lvl.clamp(1, 9) as i32;
                 TIFFSetField(tif_dst, TIFFTAG_LZMAPRESET, clamped);
             }
-        }
-        COMPRESSION_JPEGXL => {
-            if let Some(lvl) = level {
-                // JPEG-XL quality level (1-100, default 75)
+            COMPRESSION_JPEGXL => {
                 let clamped: i32 = lvl.clamp(1, 100) as i32;
-                // JPEG-XL uses the same tag as JPEG for quality
                 TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, clamped);
             }
+            _ => {}
         }
-        _ => {}
     }
 
-    let is_tiled = TIFFIsTiled(tif_src) != 0;
+    // Set other tags
+    
+    // Validate predictor for bit depth (after compression level is set)
+    // Horizontal predictor only works with 8, 16, and 32-bit samples
+    // Floating point predictor only works with 32-bit float samples
+    // For multi-channel images (spp > 1), only use predictor if bit depth is standard
+    let valid_predictor = match predictor {
+        PREDICTOR_HORIZONTAL => {
+            // Only 8, 16, and 32-bit integer samples support horizontal predictor
+            // For multi-channel images, be more conservative
+            if spp > 1 {
+                // For RGB/CMYK, only use predictor for standard bit depths
+                bps == 8 || bps == 16
+            } else {
+                bps == 8 || bps == 16 || bps == 32
+            }
+        }
+        PREDICTOR_FLOATINGPOINT => {
+            // Floating point predictor requires 32-bit float samples
+            bps == 32 && fmt == SAMPLEFORMAT_IEEEFP
+        }
+        _ => true, // PREDICTOR_NONE always valid
+    };
+
+    let final_predictor = if valid_predictor { predictor } else { PREDICTOR_NONE };
+    TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, final_predictor as u32);
+
+    // Use the is_tiled variable defined earlier in the function
     if is_tiled {
         process_tiled_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize)?;
     } else {
@@ -734,9 +778,13 @@ unsafe fn process_striped_image(
                 let take = buf_in.len().min(buf_out.len());
                 buf_out[..take].copy_from_slice(&buf_in[..take]);
             }
-            TIFFWriteScanline(tif_dst, buf_out.as_ptr() as *mut _, row, 0);
+            if TIFFWriteScanline(tif_dst, buf_out.as_ptr() as *mut _, row, 0) < 0 {
+                return Err(anyhow!("Failed to write scanline {}", row));
+            }
         } else {
-            TIFFWriteScanline(tif_dst, buf_in.as_ptr() as *mut _, row, 0);
+            if TIFFWriteScanline(tif_dst, buf_in.as_ptr() as *mut _, row, 0) < 0 {
+                return Err(anyhow!("Failed to write scanline {}", row));
+            }
         }
     }
     Ok(())
@@ -745,71 +793,88 @@ unsafe fn process_striped_image(
 unsafe fn process_tiled_image(
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
-    _w: u32,
-    _h: u32,
-    _spp: u16,
+    w: u32,
+    h: u32,
+    spp: u16,
     bps: u16,
     fmt: u16,
     quantize: bool,
 ) -> Result<()> {
-    let mut tile_width: u32 = 0;
-    let mut tile_length: u32 = 0;
-    if TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width) == 0
-        || TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length) == 0
-    {
-        return Err(anyhow!("Failed to read tile dimensions"));
+    // Tiled image support is currently limited
+    // For now, we'll read tiles and write as scanlines using libtiff's automatic conversion
+    
+    // Get the scanline size
+    let in_scanline = TIFFScanlineSize(tif_src) as usize;
+    let out_scanline = if quantize {
+        (w * spp as u32) as usize
+    } else {
+        in_scanline
+    };
+
+    // Read all scanlines first into a buffer
+    // libtiff will handle the tile-to-scanline conversion automatically
+    let mut all_scanlines = vec![0u8; in_scanline * h as usize];
+    for row in 0..h {
+        let offset = (row as usize) * in_scanline;
+        if TIFFReadScanline(tif_src, all_scanlines[offset..].as_mut_ptr() as *mut _, row, 0) < 0 {
+            return Err(anyhow!("Failed to read scanline {}", row));
+        }
     }
 
-    TIFFSetField(tif_dst, TIFFTAG_TILEWIDTH, tile_width);
-    TIFFSetField(tif_dst, TIFFTAG_TILELENGTH, tile_length);
-
-    let src_tile_size = TIFFTileSize(tif_src) as usize;
-    let num_tiles = TIFFNumberOfTiles(tif_src);
-    let mut buf_in = vec![0u8; src_tile_size];
-    let mut buf_out = vec![0u8; src_tile_size];
-
-    for tile in 0..num_tiles {
-        let bytes_read = TIFFReadEncodedTile(
-            tif_src,
-            tile,
-            buf_in.as_mut_ptr() as *mut _,
-            src_tile_size as u32,
-        );
-        if bytes_read < 0 {
-            continue;
-        }
-
-        if quantize {
-            let bytes_per_pixel = if bps == 32 {
-                4
-            } else if bps == 16 {
-                2
-            } else {
-                1
-            };
-            let actual_pixels = (bytes_read as usize) / bytes_per_pixel;
-
-            if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
-                let slice_f32 =
-                    std::slice::from_raw_parts(buf_in.as_ptr() as *const f32, actual_pixels);
-                crate::quantize::quantize_f32_to_u8(slice_f32, &mut buf_out);
-            } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
-                let slice_i16 =
-                    std::slice::from_raw_parts(buf_in.as_ptr() as *const i16, actual_pixels);
-                crate::quantize::quantize_i16_to_u8(slice_i16, &mut buf_out);
-            } else {
-                let take = (bytes_read as usize).min(buf_out.len());
-                buf_out[..take].copy_from_slice(&buf_in[..take]);
+    // Process scanlines (quantize if needed)
+    let processed_data = if quantize {
+        let mut out_buf = vec![0u8; out_scanline * h as usize];
+        if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
+            let actual_samples = (in_scanline / 4).min((w * spp as u32) as usize);
+            for row in 0..h as usize {
+                let in_offset = row * in_scanline;
+                let out_offset = row * out_scanline;
+                let slice_f32 = std::slice::from_raw_parts(
+                    all_scanlines[in_offset..].as_ptr() as *const f32,
+                    actual_samples,
+                );
+                crate::quantize::quantize_f32_to_u8(slice_f32, &mut out_buf[out_offset..]);
             }
-            TIFFWriteEncodedTile(tif_dst, tile, buf_out.as_ptr() as *mut _, actual_pixels as u32);
+        } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
+            let actual_samples = (in_scanline / 2).min((w * spp as u32) as usize);
+            for row in 0..h as usize {
+                let in_offset = row * in_scanline;
+                let out_offset = row * out_scanline;
+                let slice_i16 = std::slice::from_raw_parts(
+                    all_scanlines[in_offset..].as_ptr() as *const i16,
+                    actual_samples,
+                );
+                crate::quantize::quantize_i16_to_u8(slice_i16, &mut out_buf[out_offset..]);
+            }
         } else {
-            TIFFWriteEncodedTile(
-                tif_dst,
-                tile,
-                buf_in.as_ptr() as *mut _,
-                bytes_read as u32,
-            );
+            // Simple copy for other formats
+            let take = all_scanlines.len().min(out_buf.len());
+            out_buf[..take].copy_from_slice(&all_scanlines[..take]);
         }
+        out_buf
+    } else {
+        all_scanlines
+    };
+
+    // Write all scanlines
+    for row in 0..h {
+        let offset = (row as usize) * out_scanline;
+        TIFFWriteScanline(tif_dst, processed_data[offset..].as_ptr() as *mut _, row, 0);
     }
     Ok(())
+}
+
+/// Wrapper for TIFFReadTile that handles the varargs properly
+unsafe fn libtiff_read_tile(
+    tif: *mut TIFF,
+    x: u32,
+    y: u32,
+    z: u16,
+    s: u16,
+    buf: *mut libc::c_void,
+    size: u32,
+) -> i32 {
+    // libtiff's TIFFReadTile signature:
+    // int TIFFReadTile(TIFF* tif, uint32_t x, uint32_t y, uint16_t z, uint16_t s, void* buf, tmsize_t size)
+    crate::ffi::TIFFReadTile(tif, x, y, z, s, buf, size)
 }

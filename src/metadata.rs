@@ -11,17 +11,9 @@ static GEODOUBLEPARAMS_NAME: &[u8] = b"GeoDoubleParamsTag\0";
 static GEOASCII_NAME: &[u8] = b"GeoAsciiParamsTag\0";
 
 /// Read and clone all supported metadata from source to destination
+/// This function clones only non-conflicting metadata (not basic image structure)
 pub unsafe fn clone_metadata(src: *mut TIFF, dst: *mut TIFF) {
-    // Basic image structure tags
-    copy_tag_u32(src, dst, TIFFTAG_IMAGEWIDTH);
-    copy_tag_u32(src, dst, TIFFTAG_IMAGELENGTH);
-    copy_tag_u16(src, dst, TIFFTAG_BITSPERSAMPLE);
-    copy_tag_u16(src, dst, TIFFTAG_SAMPLESPERPIXEL);
-    copy_tag_u16(src, dst, TIFFTAG_PHOTOMETRIC);
-    copy_tag_u16(src, dst, TIFFTAG_PLANARCONFIG);
-    copy_tag_u16(src, dst, TIFFTAG_SAMPLEFORMAT);
-
-    // Resolution and units
+    // Resolution and units (will be overridden if present in source)
     copy_tag_float(src, dst, TIFFTAG_XRESOLUTION);
     copy_tag_float(src, dst, TIFFTAG_YRESOLUTION);
     copy_tag_u16(src, dst, TIFFTAG_RESOLUTIONUNIT);
@@ -33,7 +25,8 @@ pub unsafe fn clone_metadata(src: *mut TIFF, dst: *mut TIFF) {
     copy_icc_profile(src, dst);
     copy_ycbcr_tags(src, dst);
     copy_cmyk_tags(src, dst);
-    copy_image_description(src, dst);
+    // Skip image description for now - OME-XML can cause issues with multi-page files
+    // copy_image_description(src, dst);
 }
 
 /// Copy colormap (palette) from source to destination
