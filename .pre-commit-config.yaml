@@ -51,11 +51,13 @@ repos:
         types: [python]
         args: [--check, --diff]
         require_serial: true
+        additional_dependencies: []
 
     -   id: pylint
         name: Pylint
-        entry: pylint
+        entry: pylint3
         language: system
         types: [python]
         args: [--errors-only]
         require_serial: true
+        additional_dependencies: []
