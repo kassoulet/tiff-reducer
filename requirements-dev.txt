@@ -8,6 +8,6 @@ black>=24.0.0
 pylint>=3.0.0
 
 # Testing dependencies (for Python test scripts)
-gdal>=3.6.0
-numpy>=1.24.0
+# Note: NumPy <2.0 required for GDAL compatibility
+numpy>=1.24.0,<2.0.0
 pillow>=10.0.0

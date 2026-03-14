@@ -21,8 +21,10 @@ from datetime import datetime
 try:
     from osgeo import gdal
     import numpy as np
-except ImportError:
-    print("GDAL and NumPy required. Install with: pip install gdal numpy")
+except ImportError as e:
+    print(f"GDAL Python bindings required. Install with: pip install gdal numpy")
+    print(f"Note: NumPy <2.0 required for GDAL compatibility")
+    print(f"Error: {e}")
     sys.exit(1)
 
 
@@ -78,8 +80,8 @@ def create_thumbnail(tiff_path: str, png_path: str, size: int = 256) -> bool:
         img = Image.fromarray(data)
         img.save(png_path)
         return True
-    except Exception as e:
-        print(f"Thumbnail error: {e}")
+    except Exception:
+        # Silently fail - thumbnail generation is optional
         return False
 
 
@@ -110,8 +112,8 @@ def create_diff_image(orig_path: str, comp_path: str, diff_path: str) -> bool:
         img = Image.fromarray(diff_arr, mode="L")
         img.save(diff_path)
         return True
-    except Exception as e:
-        print(f"Diff image error: {e}")
+    except Exception:
+        # Silently fail - diff image is optional
         return False
 
 
