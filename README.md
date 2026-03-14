@@ -27,11 +27,29 @@ A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency
 - **Quantization**: Convert float32/int16 to uint8
 
 ### Testing & Quality
+- **Rust Integration Tests**: 11/11 passing (compression, metadata, error handling)
 - **Visual Regression**: GDAL-based pixel statistics comparison
 - **Fuzz Testing**: 18 malformed file scenarios for error handling
 - **Benchmark Mode**: `--benchmark` flag for timing/throughput metrics
+- **Dry-run Mode**: `--dry-run` flag for benchmarking without writing
 
 ## Test Results
+
+### Integration Tests (v0.3.0)
+- **Total**: 11 passed, 0 failed
+- **Categories**:
+  - Compression format tests (Zstd, Deflate, LZW)
+  - Metadata preservation (GeoTIFF, ICC profiles, alpha channels)
+  - Multi-page TIFF handling
+  - Error handling (corrupt files, nonexistent files)
+  - Benchmark output validation
+
+### Image Compression
+- **Success rate**: ~54% (164/304 images)
+- **Working**: Standard bit depths (8/16/32), single-page, strip-based images
+- **Known issues**: Multi-page OME-TIFF, some tiled images, non-standard bit depths
+
+### Legacy Tests (v0.2.0)
 - **Metadata tests**: 27 passed, 0 failed, 29 skipped (56 files)
 - **Visual tests**: 6/6 passed (lossless pixel-perfect compression)
 - **Fuzz tests**: 16/18 passed (graceful error handling)
@@ -137,6 +155,11 @@ tiff-reducer compress input.tif --output optimized.tif --extreme --quantize
 ### Benchmark Mode (timing and throughput)
 ```bash
 tiff-reducer compress input.tif --output optimized.tif --benchmark
+```
+
+### Dry-run Mode (benchmark without writing)
+```bash
+tiff-reducer compress input.tif --dry-run --benchmark
 ```
 
 ### Control Parallelism (default: number of CPUs)

@@ -626,7 +626,7 @@ tiff-reducer compress ./input_folder -o ./output --jobs 4
 ## Version History
 
 - **v0.1.0**: Basic compression, Zstd/LZMA/Deflate, tiled support, colormap preservation
-- **v0.2.0** (Current): Alpha channel, multi-page TIFF, GeoTIFF, ICC, YCbCr, CMYK, OME-XML, visual regression testing, performance benchmarks, fuzz testing, SIMD optimizations, LERC/JPEG-XL codecs, advanced parallelism
+- **v0.2.0** (Previous): Alpha channel, multi-page TIFF, GeoTIFF, ICC, YCbCr, CMYK, OME-XML, visual regression testing, performance benchmarks, fuzz testing, SIMD optimizations, LERC/JPEG-XL codecs, advanced parallelism
   - Metadata tests: 31 passed, 0 failed, 25 skipped (out of 56 files)
   - Visual tests: 6/6 passed (pixel statistics match for lossless)
   - Fuzz tests: 16/18 passed (error handling validated)
@@ -635,12 +635,18 @@ tiff-reducer compress ./input_folder -o ./output --jobs 4
   - LERC codec: Limited Error Raster Compression for scientific data
   - JPEG-XL codec: Modern high-efficiency compression
   - Parallelism: `--jobs` flag for controlling file-level parallelism
-- **v0.3.0** (Current): Comprehensive test framework, pixel-perfect validation, metadata validation
+- **v0.3.0** (Current): Test framework, CI/CD fixes, code quality improvements
   - ✅ Rust integration tests (11/11 passing)
-  - ✅ Fixed libtiff warning issues in tests
-  - ✅ Pixel-by-pixel comparison using GDAL
-  - ✅ Metadata tag-by-tag validation (GeoTIFF, ICC, ExtraSamples)
-  - ✅ Integrated with `cargo test`
-  - [ ] CI/CD integration with automated test reports
-  - [ ] HTML visual diff reports for debugging
-  - [ ] Code coverage tracking
+  - ✅ CI/CD workflow updated to Node.js 24 compatible actions
+  - ✅ All clippy warnings fixed
+  - ✅ Code formatted with `cargo fmt`
+  - ✅ ZSTD level handling fixed (disabled for libtiff 4.5.1 compatibility)
+  - ✅ Predictor validation for non-standard bit depths
+  - ✅ Missing TIFF tag handling (SamplesPerPixel, Photometric, PlanarConfig)
+  - [ ] Multi-page OME-TIFF crash fix (known issue)
+  - [ ] Tiled image handling improvements (known issue)
+  - Test Results:
+    - Integration tests: 11/11 passed
+    - Image compression: ~54% success rate (164/304 images)
+    - Working: Standard bit depths (8/16/32), single-page, strip-based images
+    - Known issues: Multi-page OME-TIFF, some tiled images, non-standard bit depths
