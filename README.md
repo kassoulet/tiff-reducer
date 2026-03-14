@@ -116,14 +116,26 @@ Test images are included locally in `tests/images/` directory (304 TIFF files).
 To run tests:
 ```bash
 # Run Rust integration tests (recommended)
-cargo test --test integration_tests
+cargo test --test integration_tests handling
 
-# Generate HTML Visual Test Report
+# Generate HTML Visual Test Report (easy way)
+./tests/generate-report.sh
+
+# Generate HTML Visual Test Report (manual)
 python3 tests/generate_html_report.py -i tests/images -o tests/report -n 20
 
 # View report in browser
-xdg-open tests/report/index.html  # Linux
-open tests/report/index.html      # macOS
+./tests/generate-report.sh --open    # Auto-open after generation
+xdg-open tests/report/index.html     # Linux (manual)
+open tests/report/index.html         # macOS (manual)
+```
+
+**Script Options:**
+```bash
+./tests/generate-report.sh -n 50           # Process 50 images (default: 20)
+./tests/generate-report.sh -f deflate -l 9 # Use Deflate compression
+./tests/generate-report.sh --open          # Open in browser after generation
+./tests/generate-report.sh --help          # Show all options
 ```
 
 **HTML Report Features:**
