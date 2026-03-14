@@ -201,5 +201,14 @@ tiff-reducer compress ./input_folder --output ./output_folder --extreme
 ## License
 MIT
 
+## Test Images
+
+Test images are sourced from:
+- [exampletiffs](https://github.com/jeremy-lao/exampletiffs.git)
+- [libtiff-pics](https://github.com/ImageMagick/libtiff-pics.git)
+- [image-tiff](https://github.com/image-rs/image-tiff.git)
+
+See [CREDITS.md](CREDITS.md) for details.
+
 ## Author
 Gautier Portet <kassoulet@gmail.com>
