@@ -696,6 +696,7 @@ unsafe fn process_single_ifd(
         }
     }
 
+    // Set compression codec first, then predictor
     TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as u32);
 
     // Validate predictor for bit depth
