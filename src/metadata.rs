@@ -1,4 +1,4 @@
-#![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_if, dead_code)]
 
 use crate::ffi::*;
 use libc::{c_char, c_void};

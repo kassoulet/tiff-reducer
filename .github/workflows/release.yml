@@ -17,14 +17,14 @@ jobs:
       - name: Extract binary
         run: |
           docker create --name temp-tiffthin tiffthin-static
-          docker cp temp-tiffthin:/tiffthin-rs ./tiffthin-rs
+          docker cp temp-tiffthin:/usr/local/bin/tiff-reducer ./tiff-reducer
           docker rm temp-tiffthin
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: tiffthin-rs-static
-          path: ./tiffthin-rs
+          name: tiff-reducer-static
+          path: ./tiff-reducer
 
       - name: Create Release
         id: create_release
@@ -43,6 +43,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./tiffthin-rs
-          asset_name: tiffthin-rs-linux-x64
+          asset_path: ./tiff-reducer
+          asset_name: tiff-reducer-linux-x64
           asset_content_type: application/octet-stream
