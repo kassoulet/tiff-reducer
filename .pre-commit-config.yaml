@@ -47,17 +47,17 @@ repos:
     -   id: black
         name: Black (Python Formatter)
         entry: black
-        language: system
+        language: python
         types: [python]
         args: [--check, --diff]
         require_serial: true
-        additional_dependencies: []
+        additional_dependencies: [black>=24.0.0]
 
     -   id: pylint
         name: Pylint
-        entry: pylint3
-        language: system
+        entry: pylint
+        language: python
         types: [python]
         args: [--errors-only]
         require_serial: true
-        additional_dependencies: []
+        additional_dependencies: [pylint>=3.0.0]
