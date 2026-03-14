@@ -52,7 +52,24 @@ extern "C" {
     pub fn TIFFTileSize(tif: *mut TIFF) -> u32;
     pub fn TIFFNumberOfTiles(tif: *mut TIFF) -> u32;
     pub fn TIFFReadEncodedTile(tif: *mut TIFF, tile: u32, buf: *mut c_void, size: u32) -> i32;
+    pub fn TIFFReadTile(
+        tif: *mut TIFF,
+        x: u32,
+        y: u32,
+        z: u16,
+        s: u16,
+        buf: *mut c_void,
+        size: u32,
+    ) -> i32;
     pub fn TIFFWriteEncodedTile(tif: *mut TIFF, tile: u32, buf: *mut c_void, size: u32) -> i32;
+    pub fn TIFFWriteTile(
+        tif: *mut TIFF,
+        buf: *mut c_void,
+        x: u32,
+        y: u32,
+        z: u16,
+        s: u16,
+    ) -> i32;
 }
 
 // Suppress libtiff warnings
@@ -65,8 +82,14 @@ pub const TIFFTAG_IMAGELENGTH: u32 = 257;
 pub const TIFFTAG_BITSPERSAMPLE: u32 = 258;
 pub const TIFFTAG_COMPRESSION: u32 = 259;
 pub const TIFFTAG_PHOTOMETRIC: u32 = 262;
+pub const TIFFTAG_ROWSPERSTRIP: u32 = 278;
 pub const TIFFTAG_SAMPLESPERPIXEL: u32 = 277;
 pub const TIFFTAG_PLANARCONFIG: u32 = 284;
+
+// PlanarConfig values
+pub const PLANARCONFIG_CONTIG: u16 = 1;
+pub const PLANARCONFIG_SEPARATE: u16 = 2;
+
 pub const TIFFTAG_XRESOLUTION: u32 = 282;
 pub const TIFFTAG_YRESOLUTION: u32 = 283;
 pub const TIFFTAG_RESOLUTIONUNIT: u32 = 296;
@@ -132,12 +155,11 @@ pub const SAMPLEFORMAT_IEEEFP: u16 = 3;
 
 // Photometric interpretation values - for reference
 #[allow(dead_code)]
+pub const PHOTOMETRIC_MINISWHITE: u16 = 1;
+pub const PHOTOMETRIC_MINISBLACK: u16 = 0;
 pub const PHOTOMETRIC_RGB: u16 = 2;
-#[allow(dead_code)]
 pub const PHOTOMETRIC_PALETTE: u16 = 3;
-#[allow(dead_code)]
 pub const PHOTOMETRIC_SEPARATED: u16 = 5; // CMYK
-#[allow(dead_code)]
 pub const PHOTOMETRIC_YCBCR: u16 = 6;
 
 // YCbCr tags
