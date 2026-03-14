@@ -115,18 +115,23 @@ Test images are included locally in `tests/images/` directory (304 TIFF files).
 
 To run tests:
 ```bash
-# Run comprehensive test suite
-bash tests/run_all_tests.sh
-
-# Run visual regression tests
-bash tests/test_visual_regression.sh
-
-# Run fuzz tests
-bash tests/fuzz_test.sh
-
-# Run Rust integration tests
+# Run Rust integration tests (recommended)
 cargo test --test integration_tests
+
+# Generate HTML Visual Test Report
+python3 tests/generate_html_report.py -i tests/images -o tests/report -n 20
+
+# View report in browser
+xdg-open tests/report/index.html  # Linux
+open tests/report/index.html      # macOS
 ```
+
+**HTML Report Features:**
+- Side-by-side image comparison (thumbnails)
+- Metadata comparison tables (dimensions, bands, compression, resolution)
+- Quality metrics (PSNR, SSIM)
+- Pass/fail indicators with color coding
+- Summary dashboard with statistics
 
 **Note:** Test images include various formats:
 - Standard TIFF files (RGB, grayscale, palette)
