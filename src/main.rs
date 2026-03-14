@@ -255,7 +255,9 @@ fn compress_command(
             let pb = m.add(ProgressBar::new(100));
             pb.set_style(
                 ProgressStyle::default_bar()
-                    .template("{spinner:.green} [{elapsed_precise}] {msg} [{bar:40.cyan/blue}] {pos}%")
+                    .template(
+                        "{spinner:.green} [{elapsed_precise}] {msg} [{bar:40.cyan/blue}] {pos}%",
+                    )
                     .unwrap(),
             );
             pb.set_position(0);
@@ -448,11 +450,7 @@ fn process_single_file(
     }
 
     if dry_run {
-        return Ok((
-            original_size,
-            0,
-            format!("{best_format}+{best_predictor}"),
-        ));
+        return Ok((original_size, 0, format!("{best_format}+{best_predictor}")));
     }
 
     // Final compression with best format and predictor
@@ -589,7 +587,7 @@ unsafe fn process_single_ifd(
     predictor: u16,
     level: Option<u32>,
     quantize: bool,
-    _is_first_page: bool,  // Currently unused - metadata cloning is disabled
+    _is_first_page: bool, // Currently unused - metadata cloning is disabled
 ) -> Result<()> {
     let mut w = 0u32;
     let mut h = 0u32;
@@ -605,7 +603,7 @@ unsafe fn process_single_ifd(
     let mut fmt = 0u16;
     let mut photometric: u16 = 0;
     let mut planar: u16 = 0;
-    
+
     TIFFGetField(tif_src, TIFFTAG_BITSPERSAMPLE, &mut bps);
     TIFFGetField(tif_src, TIFFTAG_SAMPLESPERPIXEL, &mut spp);
     TIFFGetField(tif_src, TIFFTAG_SAMPLEFORMAT, &mut fmt);
@@ -616,17 +614,17 @@ unsafe fn process_single_ifd(
     if spp == 0 {
         spp = 1; // Default to 1 sample per pixel
     }
-    
+
     // Handle missing photometric (default to minisblack for grayscale)
     if photometric == 0 {
         photometric = PHOTOMETRIC_MINISBLACK;
     }
-    
+
     // Handle missing planar config (default to contiguous)
     if planar == 0 {
         planar = PLANARCONFIG_CONTIG;
     }
-    
+
     // Check if source is tiled before we start processing
     let is_tiled = crate::ffi::TIFFIsTiled(tif_src) != 0;
 
@@ -639,7 +637,7 @@ unsafe fn process_single_ifd(
     // Set required tags for this IFD (override cloned values for current page)
     TIFFSetField(tif_dst, TIFFTAG_IMAGEWIDTH, w);
     TIFFSetField(tif_dst, TIFFTAG_IMAGELENGTH, h);
-    
+
     // Apply quantization before setting bits per sample
     let final_bps = if quantize { 8 } else { bps };
     let final_fmt = if quantize { SAMPLEFORMAT_UINT } else { fmt };
@@ -654,7 +652,7 @@ unsafe fn process_single_ifd(
     if planar != 0 {
         TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32);
     }
-    
+
     // Note: We don't set RowsPerStrip explicitly - libtiff will calculate it automatically
 
     // Resolution tags (optional but commonly present)
@@ -719,7 +717,7 @@ unsafe fn process_single_ifd(
                 PREDICTOR_NONE
             }
         }
-        _ => PREDICTOR_NONE,  // Default to no predictor for unknown values
+        _ => PREDICTOR_NONE, // Default to no predictor for unknown values
     };
     TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, final_predictor as u32);
 
@@ -734,6 +732,7 @@ unsafe fn process_single_ifd(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn process_striped_image(
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
@@ -762,17 +761,13 @@ unsafe fn process_striped_image(
         if quantize {
             if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
                 let actual_samples = (in_scanline / 4).min((w * _spp as u32) as usize);
-                let slice_f32 = std::slice::from_raw_parts(
-                    buf_in.as_ptr() as *const f32,
-                    actual_samples,
-                );
+                let slice_f32 =
+                    std::slice::from_raw_parts(buf_in.as_ptr() as *const f32, actual_samples);
                 crate::quantize::quantize_f32_to_u8(slice_f32, &mut buf_out);
             } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
                 let actual_samples = (in_scanline / 2).min((w * _spp as u32) as usize);
-                let slice_i16 = std::slice::from_raw_parts(
-                    buf_in.as_ptr() as *const i16,
-                    actual_samples,
-                );
+                let slice_i16 =
+                    std::slice::from_raw_parts(buf_in.as_ptr() as *const i16, actual_samples);
                 crate::quantize::quantize_i16_to_u8(slice_i16, &mut buf_out);
             } else {
                 let take = buf_in.len().min(buf_out.len());
@@ -790,6 +785,7 @@ unsafe fn process_striped_image(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn process_tiled_image(
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
@@ -802,7 +798,7 @@ unsafe fn process_tiled_image(
 ) -> Result<()> {
     // Tiled image support is currently limited
     // For now, we'll read tiles and write as scanlines using libtiff's automatic conversion
-    
+
     // Get the scanline size
     let in_scanline = TIFFScanlineSize(tif_src) as usize;
     let out_scanline = if quantize {
@@ -816,7 +812,13 @@ unsafe fn process_tiled_image(
     let mut all_scanlines = vec![0u8; in_scanline * h as usize];
     for row in 0..h {
         let offset = (row as usize) * in_scanline;
-        if TIFFReadScanline(tif_src, all_scanlines[offset..].as_mut_ptr() as *mut _, row, 0) < 0 {
+        if TIFFReadScanline(
+            tif_src,
+            all_scanlines[offset..].as_mut_ptr() as *mut _,
+            row,
+            0,
+        ) < 0
+        {
             return Err(anyhow!("Failed to read scanline {}", row));
         }
     }

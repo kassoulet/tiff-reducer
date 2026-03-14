@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use libc::{c_char, c_int, c_void};
 
 #[allow(clippy::upper_case_acronyms)]
@@ -62,14 +64,7 @@ extern "C" {
         size: u32,
     ) -> i32;
     pub fn TIFFWriteEncodedTile(tif: *mut TIFF, tile: u32, buf: *mut c_void, size: u32) -> i32;
-    pub fn TIFFWriteTile(
-        tif: *mut TIFF,
-        buf: *mut c_void,
-        x: u32,
-        y: u32,
-        z: u16,
-        s: u16,
-    ) -> i32;
+    pub fn TIFFWriteTile(tif: *mut TIFF, buf: *mut c_void, x: u32, y: u32, z: u16, s: u16) -> i32;
 }
 
 // Suppress libtiff warnings

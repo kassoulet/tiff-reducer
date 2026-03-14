@@ -38,7 +38,7 @@ fn get_all_test_images() -> Vec<PathBuf> {
 /// Test fixture for compression tests
 struct CompressionTest {
     #[allow(dead_code)]
-    temp_dir: TempDir,  // Keep alive for duration of test
+    temp_dir: TempDir, // Keep alive for duration of test
     input_path: PathBuf,
     output_path: PathBuf,
 }
@@ -61,7 +61,7 @@ impl CompressionTest {
             .arg("build")
             .arg("--quiet")
             .output();
-        
+
         if let Err(e) = build_result {
             eprintln!("Build failed: {}", e);
             return false;
@@ -84,19 +84,24 @@ impl CompressionTest {
         match result {
             Ok(output) => {
                 if !output.status.success() {
-                    eprintln!("Command failed for {:?}: {:?}", 
-                        self.input_path.file_name(), 
-                        String::from_utf8_lossy(&output.stderr));
+                    eprintln!(
+                        "Command failed for {:?}: {:?}",
+                        self.input_path.file_name(),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
                     return false;
                 }
             }
             Err(e) => {
-                eprintln!("Failed to run command for {:?}: {}", 
-                    self.input_path.file_name(), e);
+                eprintln!(
+                    "Failed to run command for {:?}: {}",
+                    self.input_path.file_name(),
+                    e
+                );
                 return false;
             }
         }
-        
+
         // Give file system time to sync
         std::thread::sleep(std::time::Duration::from_millis(200));
         true
@@ -145,7 +150,10 @@ impl CompressionTest {
 #[test]
 fn test_all_images_can_be_read_and_compressed() {
     let test_images = get_all_test_images();
-    assert!(!test_images.is_empty(), "No test images found in tests/images");
+    assert!(
+        !test_images.is_empty(),
+        "No test images found in tests/images"
+    );
 
     let mut success_count = 0;
     let mut fail_count = 0;
@@ -153,7 +161,7 @@ fn test_all_images_can_be_read_and_compressed() {
 
     for image_path in test_images {
         let test = CompressionTest::new(&image_path);
-        
+
         // Try to compress with Zstd
         if !test.run("zstd", Some(19)) {
             eprintln!("SKIP (read error): {:?}", image_path.file_name());
@@ -175,11 +183,7 @@ fn test_all_images_can_be_read_and_compressed() {
     eprintln!("Skipped: {}", skipped_count);
 
     // All readable images should compress successfully
-    assert!(
-        fail_count == 0,
-        "{} images failed to compress",
-        fail_count
-    );
+    assert!(fail_count == 0, "{} images failed to compress", fail_count);
 }
 
 // ============================================================================
@@ -197,7 +201,7 @@ fn test_metadata_preserved_for_all_images() {
 
     for image_path in test_images {
         let test = CompressionTest::new(&image_path);
-        
+
         if !test.run("zstd", Some(19)) {
             skipped_count += 1;
             continue;
@@ -236,7 +240,7 @@ fn test_metadata_preserved_for_all_images() {
         // Check band count matches
         let orig_bands = orig["bands"].as_array().map(|b| b.len()).unwrap_or(0);
         let comp_bands = comp["bands"].as_array().map(|b| b.len()).unwrap_or(0);
-        
+
         if orig_bands != comp_bands {
             fail_count += 1;
             eprintln!("FAIL (band count changed): {:?}", image_path.file_name());
@@ -273,7 +277,7 @@ fn test_pixel_content_preserved_lossless() {
 
     for image_path in test_images {
         let test = CompressionTest::new(&image_path);
-        
+
         if !test.run("zstd", Some(19)) {
             skipped_count += 1;
             continue;
@@ -319,27 +323,41 @@ fn test_pixel_content_preserved_lossless() {
         };
 
         let mut pixel_match = true;
-        
+
         // Check statistics for each band
         for (i, (orig_band, comp_band)) in orig_bands.iter().zip(comp_bands.iter()).enumerate() {
             // Min and max must match exactly for lossless
             if orig_band["minimum"] != comp_band["minimum"] {
-                eprintln!("FAIL (min changed band {}): {:?}", i, image_path.file_name());
+                eprintln!(
+                    "FAIL (min changed band {}): {:?}",
+                    i,
+                    image_path.file_name()
+                );
                 pixel_match = false;
                 break;
             }
             if orig_band["maximum"] != comp_band["maximum"] {
-                eprintln!("FAIL (max changed band {}): {:?}", i, image_path.file_name());
+                eprintln!(
+                    "FAIL (max changed band {}): {:?}",
+                    i,
+                    image_path.file_name()
+                );
                 pixel_match = false;
                 break;
             }
-            
+
             // Mean may have small floating point differences
-            if let (Some(orig_mean), Some(comp_mean)) = 
-                (orig_band["mean"].as_f64(), comp_band["mean"].as_f64()) {
+            if let (Some(orig_mean), Some(comp_mean)) =
+                (orig_band["mean"].as_f64(), comp_band["mean"].as_f64())
+            {
                 let diff = (orig_mean - comp_mean).abs();
                 if diff > 0.01 {
-                    eprintln!("FAIL (mean changed band {}): {:?} diff={}", i, image_path.file_name(), diff);
+                    eprintln!(
+                        "FAIL (mean changed band {}): {:?} diff={}",
+                        i,
+                        image_path.file_name(),
+                        diff
+                    );
                     pixel_match = false;
                     break;
                 }
@@ -373,7 +391,7 @@ fn test_pixel_content_preserved_lossless() {
 fn test_corrupt_file_handling() {
     let temp_dir = TempDir::new().unwrap();
     let corrupt_path = temp_dir.path().join("corrupt.tif");
-    
+
     // Write invalid TIFF data
     fs::write(&corrupt_path, b"NOT A TIFF FILE").unwrap();
 
@@ -389,7 +407,7 @@ fn test_corrupt_file_handling() {
 
     // Should fail gracefully (non-zero exit or no output file)
     let result = cmd.output().expect("Failed to run command");
-    
+
     // Either command failed OR output file doesn't exist
     assert!(
         !result.status.success() || !output_path.exists(),
@@ -412,11 +430,13 @@ fn test_nonexistent_file_handling() {
     let result = cmd.output().expect("Failed to run command");
     let stderr = String::from_utf8_lossy(&result.stderr);
     let stdout = String::from_utf8_lossy(&result.stdout);
-    
+
     // Check for error message in output
-    let has_error = stderr.contains("error") || stderr.contains("No such file") ||
-                    stdout.contains("error") || stdout.contains("No such file");
-    
+    let has_error = stderr.contains("error")
+        || stderr.contains("No such file")
+        || stdout.contains("error")
+        || stdout.contains("No such file");
+
     assert!(
         has_error || !output_path.exists(),
         "Nonexistent file should produce error or no output"
