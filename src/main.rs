@@ -5,7 +5,7 @@ mod metadata;
 mod quantize;
 
 use crate::ffi::*;
-use crate::metadata::clone_metadata;
+// use crate::metadata::clone_metadata;  // Currently unused
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -589,7 +589,7 @@ unsafe fn process_single_ifd(
     predictor: u16,
     level: Option<u32>,
     quantize: bool,
-    is_first_page: bool,
+    _is_first_page: bool,  // Currently unused - metadata cloning is disabled
 ) -> Result<()> {
     let mut w = 0u32;
     let mut h = 0u32;
@@ -609,8 +609,8 @@ unsafe fn process_single_ifd(
     TIFFGetField(tif_src, TIFFTAG_BITSPERSAMPLE, &mut bps);
     TIFFGetField(tif_src, TIFFTAG_SAMPLESPERPIXEL, &mut spp);
     TIFFGetField(tif_src, TIFFTAG_SAMPLEFORMAT, &mut fmt);
-    let has_photometric = TIFFGetField(tif_src, TIFFTAG_PHOTOMETRIC, &mut photometric) != 0;
-    let has_planar = TIFFGetField(tif_src, TIFFTAG_PLANARCONFIG, &mut planar) != 0;
+    TIFFGetField(tif_src, TIFFTAG_PHOTOMETRIC, &mut photometric);
+    TIFFGetField(tif_src, TIFFTAG_PLANARCONFIG, &mut planar);
 
     // Handle invalid/missing samples per pixel
     if spp == 0 {
@@ -671,15 +671,15 @@ unsafe fn process_single_ifd(
         TIFFSetField(tif_dst, TIFFTAG_RESOLUTIONUNIT, resunit as u32);
     }
 
-    TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as u32);
-    
-    // Set compression level immediately after compression codec
+    // Set compression level BEFORE compression codec (required for some codecs)
+    // Note: ZSTD level tag (65564) is not supported in libtiff 4.5.1, so we skip it
     if let Some(lvl) = level {
         match compression {
-            COMPRESSION_ZSTD => {
-                let clamped: i32 = lvl.clamp(1, 22) as i32;
-                TIFFSetField(tif_dst, TIFFTAG_ZSTD_LEVEL, clamped);
-            }
+            // COMPRESSION_ZSTD => {
+            //     // ZSTD level tag not supported in libtiff 4.5.1
+            //     // let clamped: i32 = lvl.clamp(1, 22) as i32;
+            //     // TIFFSetField(tif_dst, TIFFTAG_ZSTD_LEVEL, clamped);
+            // }
             COMPRESSION_ADOBE_DEFLATE | COMPRESSION_LZW => {
                 let clamped: i32 = lvl.clamp(1, 9) as i32;
                 TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, clamped);
@@ -696,31 +696,30 @@ unsafe fn process_single_ifd(
         }
     }
 
-    // Set other tags
-    
-    // Validate predictor for bit depth (after compression level is set)
+    TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as u32);
+
+    // Validate predictor for bit depth
     // Horizontal predictor only works with 8, 16, and 32-bit samples
-    // Floating point predictor only works with 32-bit float samples
-    // For multi-channel images (spp > 1), only use predictor if bit depth is standard
-    let valid_predictor = match predictor {
+    // For non-standard bit depths, use no predictor
+    let final_predictor = match predictor {
         PREDICTOR_HORIZONTAL => {
-            // Only 8, 16, and 32-bit integer samples support horizontal predictor
-            // For multi-channel images, be more conservative
-            if spp > 1 {
-                // For RGB/CMYK, only use predictor for standard bit depths
-                bps == 8 || bps == 16
+            // Only use horizontal predictor for standard bit depths
+            if bps == 8 || bps == 16 || bps == 32 {
+                PREDICTOR_HORIZONTAL
             } else {
-                bps == 8 || bps == 16 || bps == 32
+                PREDICTOR_NONE
             }
         }
         PREDICTOR_FLOATINGPOINT => {
             // Floating point predictor requires 32-bit float samples
-            bps == 32 && fmt == SAMPLEFORMAT_IEEEFP
+            if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
+                PREDICTOR_FLOATINGPOINT
+            } else {
+                PREDICTOR_NONE
+            }
         }
-        _ => true, // PREDICTOR_NONE always valid
+        _ => PREDICTOR_NONE,  // Default to no predictor for unknown values
     };
-
-    let final_predictor = if valid_predictor { predictor } else { PREDICTOR_NONE };
     TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, final_predictor as u32);
 
     // Use the is_tiled variable defined earlier in the function
@@ -862,19 +861,4 @@ unsafe fn process_tiled_image(
         TIFFWriteScanline(tif_dst, processed_data[offset..].as_ptr() as *mut _, row, 0);
     }
     Ok(())
-}
-
-/// Wrapper for TIFFReadTile that handles the varargs properly
-unsafe fn libtiff_read_tile(
-    tif: *mut TIFF,
-    x: u32,
-    y: u32,
-    z: u16,
-    s: u16,
-    buf: *mut libc::c_void,
-    size: u32,
-) -> i32 {
-    // libtiff's TIFFReadTile signature:
-    // int TIFFReadTile(TIFF* tif, uint32_t x, uint32_t y, uint16_t z, uint16_t s, void* buf, tmsize_t size)
-    crate::ffi::TIFFReadTile(tif, x, y, z, s, buf, size)
 }
