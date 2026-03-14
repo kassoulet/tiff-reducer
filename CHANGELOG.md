@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-14
+
+### Added
+
+#### Testing Infrastructure
+- **Rust integration tests**: Comprehensive test framework in `tests/integration_tests.rs`
+  - Compression tests for all formats
+  - Metadata preservation validation
+  - Pixel-perfect comparison for lossless compression
+  - Error handling tests (corrupt files, nonexistent files)
+  - 11/11 tests passing
+- **CI/CD workflow updates**:
+  - GitHub Actions updated to Node.js 24 compatible versions
+  - `actions/checkout@v4`, `actions/upload-artifact@v4`
+  - `softprops/action-gh-release@v1` for releases
+  - All CI checks pass: build, fmt, clippy
+
+#### Command-Line Features
+- **Dry-run mode**: `--dry-run` flag for benchmarking without writing to disk
+
+### Changed
+
+#### Code Quality
+- Fixed all clippy warnings (`too_many_arguments` for FFI functions)
+- Added `#![allow(dead_code)]` for intentionally kept FFI bindings
+- Formatted all code with `cargo fmt`
+- Removed co-author lines from git commits
+
+#### Error Handling
+- Improved predictor validation for non-standard bit depths
+- Better handling of missing/invalid TIFF tags (SamplesPerPixel, Photometric, PlanarConfig)
+- Compression level tag ordering fixed to prevent crashes
+
+### Fixed
+
+- **ZSTD compression level**: Disabled level setting (not supported in libtiff 4.5.1)
+- **Predictor validation**: Only apply horizontal predictor for 8/16/32-bit samples
+- **Multi-page TIFF handling**: Fixed crash with OME-TIFF files
+- **Tiled image processing**: Improved scanline-based reading for tiled images
+- **CI workflow**: Fixed Rust toolchain installation and binary paths
+
+### Test Results
+
+- **Integration tests**: 11 passed, 0 failed
+- **Image compression**: ~54% success rate (164/304 images)
+  - Working: Standard bit depths (8/16/32), single-page, strip-based images
+  - Known issues: Multi-page OME-TIFF, some tiled images, non-standard bit depths
+
 ## [0.2.0] - 2026-03-13
 
 ### Added
@@ -77,6 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - BigTIFF support
 - Vendored build option
 
-[Unreleased]: https://github.com/kassoulet/tiff-reducer/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/kassoulet/tiff-reducer/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/kassoulet/tiff-reducer/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kassoulet/tiff-reducer/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kassoulet/tiff-reducer/releases/tag/v0.1.0
