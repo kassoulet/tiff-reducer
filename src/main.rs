@@ -776,10 +776,8 @@ unsafe fn process_striped_image(
             if TIFFWriteScanline(tif_dst, buf_out.as_ptr() as *mut _, row, 0) < 0 {
                 return Err(anyhow!("Failed to write scanline {}", row));
             }
-        } else {
-            if TIFFWriteScanline(tif_dst, buf_in.as_ptr() as *mut _, row, 0) < 0 {
-                return Err(anyhow!("Failed to write scanline {}", row));
-            }
+        } else if TIFFWriteScanline(tif_dst, buf_in.as_ptr() as *mut _, row, 0) < 0 {
+            return Err(anyhow!("Failed to write scanline {}", row));
         }
     }
     Ok(())
