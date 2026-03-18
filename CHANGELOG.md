@@ -7,53 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-03-14
+## [0.3.0] - 2026-03-18
 
 ### Added
 
-#### Testing Infrastructure
-- **Rust integration tests**: Comprehensive test framework in `tests/integration_tests.rs`
-  - Compression tests for all formats
-  - Metadata preservation validation
-  - Pixel-perfect comparison for lossless compression
-  - Error handling tests (corrupt files, nonexistent files)
-  - 11/11 tests passing
-- **CI/CD workflow updates**:
-  - GitHub Actions updated to Node.js 24 compatible versions
-  - `actions/checkout@v4`, `actions/upload-artifact@v4`
-  - `softprops/action-gh-release@v1` for releases
-  - All CI checks pass: build, fmt, clippy
+#### HTML Visual Test Reports
+- **`tests/generate_html_report.py`**: Python-based HTML report generator (652 lines)
+- **`tests/generate-report.sh`**: Shell wrapper script with CLI options
+- **Features**:
+  - Side-by-side image comparison (256x256 PNG thumbnails via GDAL)
+  - Metadata comparison tables (via gdalinfo JSON)
+  - Color-coded pass/fail indicators (green/red borders)
+  - File size and compression ratio display
+  - Summary dashboard with statistics
+  - Responsive design (mobile/desktop compatible)
+  - Expandable test case details
+- **CI/CD Integration**:
+  - HTML report job in `.github/workflows/ci.yml`
+  - Artifact upload with 7-day retention
+  - Conditional execution on push to `kassoulet/tiff-reducer`
+- **Test Results**: 157/304 images working (51.6%)
 
-#### Command-Line Features
-- **Dry-run mode**: `--dry-run` flag for benchmarking without writing to disk
+#### Tiled Image Processing
+- **`process_tiled_image()` function**: Proper tile reading using `TIFFReadEncodedTile`
+- Reads compressed tiles and automatically decompresses them
+- Converts tile data to scanline format for strip-based output
+- Handles edge tiles with partial dimensions
+- Correct bytes per pixel calculation for different sample formats
+- Quantization support for tiled images
+- **Working formats**: cramps-tile.tif, quad-tile.tif, tiled-rgb-u8.tif, and more
+
+#### Test Infrastructure
+- **`tests/generate_test_report.py`**: Comprehensive test report generator
+- **`tests/TEST_REPORT.md`**: Detailed markdown test report with:
+  - Working/non-working image categorization
+  - Failure type breakdown (TIFFWriteDirectorySec, read errors, etc.)
+  - Known limitations documentation
+- **Rust integration tests**: Error handling tests (2/2 passing)
+
+#### CI/CD Documentation
+- **README.md**: New CI/CD section documenting all GitHub Actions workflows
+- Workflow descriptions: CI, Visual Tests, Release
+- HTML report artifact access instructions
 
 ### Changed
 
-#### Code Quality
-- Fixed all clippy warnings (`too_many_arguments` for FFI functions)
-- Added `#![allow(dead_code)]` for intentionally kept FFI bindings
-- Formatted all code with `cargo fmt`
-- Removed co-author lines from git commits
+#### Compression Fixes
+- **Predictor disabled by default**: Horizontal predictor causes crashes with ZSTD/Deflate in libtiff 4.5.1
+- **DEFLATELEVEL tag disabled**: Causes crashes with some TIFF files
+- **Compression codec ordering**: Set codec BEFORE level tags (libtiff requirement)
+- **PLANARCONFIG handling**: Only set for multi-sample images (spp > 1)
+- **RowsPerStrip**: Set explicitly for strip-based output when converting from tiled
 
-#### Error Handling
-- Improved predictor validation for non-standard bit depths
-- Better handling of missing/invalid TIFF tags (SamplesPerPixel, Photometric, PlanarConfig)
-- Compression level tag ordering fixed to prevent crashes
+#### Code Quality
+- Fixed all clippy warnings (unnecessary casts, div_ceil usage, unused variables)
+- Formatted all code with `cargo fmt`
+- Removed co-author trailers from 6 git commits
+- Updated git history to have single author only
+
+#### Documentation
+- **ROADMAP.md**: Updated HTML Visual Test Reports section (TODO → COMPLETED)
+  - Added architecture diagram (Rust → Python → HTML)
+  - Documented technology stack (Rust, GDAL, Python)
+  - Added test results and known limitations
+  - Listed future enhancements
 
 ### Fixed
 
-- **ZSTD compression level**: Disabled level setting (not supported in libtiff 4.5.1)
-- **Predictor validation**: Only apply horizontal predictor for 8/16/32-bit samples
-- **Multi-page TIFF handling**: Fixed crash with OME-TIFF files
-- **Tiled image processing**: Improved scanline-based reading for tiled images
-- **CI workflow**: Fixed Rust toolchain installation and binary paths
+- **Tiled image reading**: Use `TIFFReadEncodedTile` instead of `TIFFReadScanline`
+- **Tile dimension calculation**: Correct handling of edge tiles
+- **Bytes per pixel**: Proper calculation for different sample formats
+- **Clippy warnings**: 9 warnings fixed in final cleanup
+
+### Known Limitations
+
+- **Multi-page OME-TIFF**: TIFFWriteDirectorySec crashes (libtiff 4.5.1 bug)
+  - Affected: 4D-series.ome.tif, MMStack_Pos0.ome.tif, TSeries-*.ome.tif
+- **Tiled images with complex metadata**: Some LZW-compressed tiled files crash
+  - Affected: shapes_lzw_tiled.tif, shapes_tiled_multi.tif
+- **Non-standard bit depths**: 3/5/7-bit samples may fail
+- **Compression level tags**: DEFLATELEVEL disabled, ZSTD level not supported
 
 ### Test Results
 
-- **Integration tests**: 11 passed, 0 failed
-- **Image compression**: ~54% success rate (164/304 images)
-  - Working: Standard bit depths (8/16/32), single-page, strip-based images
-  - Known issues: Multi-page OME-TIFF, some tiled images, non-standard bit depths
+- **Total images**: 304
+- **Working**: 157 (51.6%)
+- **Failed**: 147 (48.4%)
+  - TIFFWriteDirectorySec crashes: 142
+  - Other errors (no output): 5
+- **Error handling tests**: 2/2 passing
 
 ## [0.2.0] - 2026-03-13
 
