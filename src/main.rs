@@ -584,10 +584,10 @@ unsafe fn process_single_ifd(
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
     compression: u16,
-    predictor: u16,
+    _predictor: u16,
     level: Option<u32>,
     quantize: bool,
-    _is_first_page: bool, // Currently unused - metadata cloning is disabled
+    _is_first_page: bool,
 ) -> Result<()> {
     let mut w = 0u32;
     let mut h = 0u32;
@@ -648,12 +648,14 @@ unsafe fn process_single_ifd(
         TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, final_fmt as u32);
     }
     TIFFSetField(tif_dst, TIFFTAG_PHOTOMETRIC, photometric as u32);
-    // Only set PLANARCONFIG if source had it
-    if planar != 0 {
+    // Only set PLANARCONFIG if source had it and spp > 1 (multi-sample)
+    // For single-sample images, libtiff expects PLANARCONFIG_CONTIG
+    if planar != 0 && spp > 1 {
         TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32);
     }
 
     // Note: We don't set RowsPerStrip explicitly - libtiff will calculate it automatically
+    // Setting it manually can cause issues with certain images
 
     // Resolution tags (optional but commonly present)
     let mut xres: f32 = 0.0;
@@ -669,8 +671,23 @@ unsafe fn process_single_ifd(
         TIFFSetField(tif_dst, TIFFTAG_RESOLUTIONUNIT, resunit as u32);
     }
 
+    // Copy ImageDescription (important for OME-XML metadata)
+    // Only copy for the first page to avoid duplicating large XML blocks
+    // DISABLED: Can cause crashes with large XML metadata
+    // if is_first_page {
+    //     let mut desc: *mut c_char = std::ptr::null_mut();
+    //     if TIFFGetField(tif_src, TIFFTAG_IMAGEDESCRIPTION, &mut desc) != 0 {
+    //         if !desc.is_null() {
+    //             TIFFSetField(tif_dst, TIFFTAG_IMAGEDESCRIPTION, desc);
+    //         }
+    //     }
+    // }
+
     // Set compression level BEFORE compression codec (required for some codecs)
     // Note: ZSTD level tag (65564) is not supported in libtiff 4.5.1, so we skip it
+    // UPDATE: Set compression codec FIRST, then level
+    TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as u32);
+
     if let Some(lvl) = level {
         match compression {
             // COMPRESSION_ZSTD => {
@@ -680,7 +697,8 @@ unsafe fn process_single_ifd(
             // }
             COMPRESSION_ADOBE_DEFLATE | COMPRESSION_LZW => {
                 let clamped: i32 = lvl.clamp(1, 9) as i32;
-                TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, clamped);
+                // DISABLED: Causes crash with some TIFF files in libtiff 4.5.1
+                // TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, clamped);
             }
             COMPRESSION_LZMA => {
                 let clamped: i32 = lvl.clamp(1, 9) as i32;
@@ -694,33 +712,16 @@ unsafe fn process_single_ifd(
         }
     }
 
-    // Set compression codec first, then predictor
-    TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as u32);
+    // Validate predictor for bit depth and sample format
+    // Horizontal predictor only works with 8, 16, and 32-bit unsigned integer samples
+    // For non-standard bit depths or signed/float formats, use no predictor
+    // NOTE: Currently disabled by default as it causes crashes with some libtiff versions
+    let final_predictor = PREDICTOR_NONE;
 
-    // Validate predictor for bit depth
-    // Horizontal predictor only works with 8, 16, and 32-bit samples
-    // For non-standard bit depths, use no predictor
-    let final_predictor = match predictor {
-        PREDICTOR_HORIZONTAL => {
-            // Only use horizontal predictor for standard bit depths
-            if bps == 8 || bps == 16 || bps == 32 {
-                PREDICTOR_HORIZONTAL
-            } else {
-                PREDICTOR_NONE
-            }
-        }
-        PREDICTOR_FLOATINGPOINT => {
-            // Floating point predictor requires 32-bit float samples
-            if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
-                PREDICTOR_FLOATINGPOINT
-            } else {
-                PREDICTOR_NONE
-            }
-        }
-        _ => PREDICTOR_NONE, // Default to no predictor for unknown values
-    };
+    // Set predictor (compression was already set earlier)
     TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, final_predictor as u32);
 
+    // Write image data
     // Use the is_tiled variable defined earlier in the function
     if is_tiled {
         process_tiled_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize)?;
