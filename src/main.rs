@@ -654,8 +654,21 @@ unsafe fn process_single_ifd(
         TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32);
     }
 
-    // Note: We don't set RowsPerStrip explicitly - libtiff will calculate it automatically
-    // Setting it manually can cause issues with certain images
+    // For tiled images, preserve the tiled format; otherwise use strips
+    // NOTE: Currently disabled - writing tiles causes crashes with some files
+    // We read tiles but write as strips for compatibility
+    if is_tiled {
+        // Get source tile dimensions (for reading only)
+        let mut tile_width: u32 = 0;
+        let mut tile_length: u32 = 0;
+        TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width);
+        TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length);
+        // Write as strips for now - more compatible
+        TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h as u32);
+    } else {
+        // Set RowsPerStrip for strip-based output
+        TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h as u32);
+    }
 
     // Resolution tags (optional but commonly present)
     let mut xres: f32 = 0.0;
@@ -795,72 +808,122 @@ unsafe fn process_tiled_image(
     fmt: u16,
     quantize: bool,
 ) -> Result<()> {
-    // Tiled image support is currently limited
-    // For now, we'll read tiles and write as scanlines using libtiff's automatic conversion
+    // For tiled images, we use libtiff's built-in tile reading
+    // and convert to scanlines for writing
+    
+    // Get tile dimensions
+    let mut tile_width: u32 = 0;
+    let mut tile_length: u32 = 0;
+    if TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width) == 0
+        || TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length) == 0
+    {
+        return Err(anyhow!("Failed to read tile dimensions"));
+    }
 
-    // Get the scanline size
-    let in_scanline = TIFFScanlineSize(tif_src) as usize;
-    let out_scanline = if quantize {
-        (w * spp as u32) as usize
-    } else {
-        in_scanline
-    };
+    // Calculate bytes per pixel and row size
+    let bytes_per_sample = (bps as usize + 7) / 8;
+    let bytes_per_pixel = bytes_per_sample * (spp as usize);
+    let row_size = w as usize * bytes_per_pixel;
+    
+    // Create output buffer for all scanlines
+    let mut image_data = vec![0u8; row_size * h as usize];
 
-    // Read all scanlines first into a buffer
-    // libtiff will handle the tile-to-scanline conversion automatically
-    let mut all_scanlines = vec![0u8; in_scanline * h as usize];
-    for row in 0..h {
-        let offset = (row as usize) * in_scanline;
-        if TIFFReadScanline(
-            tif_src,
-            all_scanlines[offset..].as_mut_ptr() as *mut _,
-            row,
-            0,
-        ) < 0
-        {
-            return Err(anyhow!("Failed to read scanline {}", row));
+    // Calculate number of tiles
+    let tiles_across = (w + tile_width - 1) / tile_width;
+    let tiles_down = (h + tile_length - 1) / tile_length;
+
+    // Get tile size for buffer allocation
+    // Use a generous buffer size for decoded tile data
+    let tile_buffer_size = (tile_width * tile_length * bytes_per_pixel as u32) as usize;
+    let mut tile_buf = vec![0u8; tile_buffer_size];
+    
+    // Read each tile and place in output buffer
+    for tile_y in 0..tiles_down as u32 {
+        for tile_x in 0..tiles_across as u32 {
+            let tile_index = tile_y * tiles_across as u32 + tile_x;
+            
+            // Read encoded tile (automatically decompresses)
+            let read_size = crate::ffi::TIFFReadEncodedTile(
+                tif_src, 
+                tile_index, 
+                tile_buf.as_mut_ptr() as *mut _, 
+                tile_buffer_size as u32
+            );
+            
+            if read_size < 0 {
+                return Err(anyhow!("Failed to decode tile {} at ({}, {})", tile_index, tile_x, tile_y));
+            }
+
+            // Calculate tile position in image
+            let start_x = (tile_x * tile_width) as usize;
+            let start_y = (tile_y * tile_length) as usize;
+            
+            // Calculate actual tile dimensions (edge tiles may be smaller)
+            let actual_width = std::cmp::min(tile_width as usize, w as usize - start_x);
+            let actual_height = std::cmp::min(tile_length as usize, h as usize - start_y);
+            
+            // Copy tile data to image buffer row by row
+            // TIFFReadEncodedTile returns a contiguous block: [row0][row1][row2]...
+            let read_size_usize = read_size as usize;
+            let bytes_per_row = actual_width * bytes_per_pixel;
+            
+            for row in 0..actual_height {
+                let src_offset = row * bytes_per_row;
+                let dst_offset = ((start_y + row) * row_size) + (start_x * bytes_per_pixel);
+                
+                if src_offset + bytes_per_row <= read_size_usize {
+                    image_data[dst_offset..dst_offset + bytes_per_row]
+                        .copy_from_slice(&tile_buf[src_offset..src_offset + bytes_per_row]);
+                }
+            }
         }
     }
 
-    // Process scanlines (quantize if needed)
+    // Process image data (quantize if needed)
     let processed_data = if quantize {
-        let mut out_buf = vec![0u8; out_scanline * h as usize];
+        let mut out_buf = vec![0u8; w as usize * h as usize];
         if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
-            let actual_samples = (in_scanline / 4).min((w * spp as u32) as usize);
             for row in 0..h as usize {
-                let in_offset = row * in_scanline;
-                let out_offset = row * out_scanline;
+                let in_offset = row * row_size;
+                let out_offset = row * w as usize;
                 let slice_f32 = std::slice::from_raw_parts(
-                    all_scanlines[in_offset..].as_ptr() as *const f32,
-                    actual_samples,
+                    image_data[in_offset..].as_ptr() as *const f32,
+                    w as usize * spp as usize,
                 );
                 crate::quantize::quantize_f32_to_u8(slice_f32, &mut out_buf[out_offset..]);
             }
         } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
-            let actual_samples = (in_scanline / 2).min((w * spp as u32) as usize);
             for row in 0..h as usize {
-                let in_offset = row * in_scanline;
-                let out_offset = row * out_scanline;
+                let in_offset = row * row_size;
+                let out_offset = row * w as usize;
                 let slice_i16 = std::slice::from_raw_parts(
-                    all_scanlines[in_offset..].as_ptr() as *const i16,
-                    actual_samples,
+                    image_data[in_offset..].as_ptr() as *const i16,
+                    w as usize * spp as usize,
                 );
                 crate::quantize::quantize_i16_to_u8(slice_i16, &mut out_buf[out_offset..]);
             }
         } else {
-            // Simple copy for other formats
-            let take = all_scanlines.len().min(out_buf.len());
-            out_buf[..take].copy_from_slice(&all_scanlines[..take]);
+            // For other formats, data is already in correct format
+            return Err(anyhow!("Quantization not supported for this format"));
         }
         out_buf
     } else {
-        all_scanlines
+        image_data
     };
 
-    // Write all scanlines
+    // Write all scanlines to destination
     for row in 0..h {
-        let offset = (row as usize) * out_scanline;
-        TIFFWriteScanline(tif_dst, processed_data[offset..].as_ptr() as *mut _, row, 0);
+        let offset = (row as usize) * row_size;
+        let result = crate::ffi::TIFFWriteScanline(
+            tif_dst,
+            processed_data[offset..].as_ptr() as *mut _,
+            row,
+            0,
+        );
+        if result < 0 {
+            return Err(anyhow!("Failed to write scanline {}", row));
+        }
     }
+    
     Ok(())
 }
