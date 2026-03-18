@@ -217,6 +217,21 @@ tiff-reducer compress ./input_folder --output ./output_folder --extreme
 
 ## Development
 
+### CI/CD
+
+This project uses GitHub Actions for continuous integration and testing.
+
+**Workflows:**
+- **CI** (`.github/workflows/ci.yml`): Build, format check, clippy, and error handling tests
+- **Visual Tests** (`.github/workflows/test.yml`): HTML visual test report generation
+- **Release** (`.github/workflows/release.yml`): Automated release creation
+
+**HTML Visual Report:**
+- Runs on push to `kassoulet/tiff-reducer` repository
+- Processes 20 test images with ZSTD compression
+- Uploads report and thumbnails as CI artifacts (7-day retention)
+- View artifacts from GitHub Actions run page
+
 ### Pre-commit Hooks
 
 This project uses [pre-commit](https://pre-commit.com/) to enforce code quality standards.
