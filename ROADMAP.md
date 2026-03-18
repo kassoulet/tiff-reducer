@@ -334,7 +334,7 @@ for each test image:
     <span class="fail">Failed: 0</span>
     <span class="skip">Skipped: 25</span>
   </div>
-  
+
   <h2>Test Cases</h2>
   <div class="test-case pass">
     <h3>poppies.tif ✅</h3>
@@ -409,7 +409,7 @@ def create_diff_image(orig_path, comp_path, diff_path):
   run: |
     bash tests/run_all_tests.sh
     python tests/generate_html_report.py
-    
+
 - name: Upload Test Report
   uses: actions/upload-artifact@v3
   with:
