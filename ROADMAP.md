@@ -6,7 +6,45 @@ This document lists future features and known limitations to address in future r
 
 ## High Priority
 
-### 1. Security Audit (v0.2.0)
+### 1. GeoTIFF Support
+**Status:** ✅ **COMPLETED** (v0.3.0)
+
+**Issue:** GeoTIFF tags (coordinate system, origin, pixel size) were not preserved during compression.
+
+**Affected files:** `mask.tif`, `geo-5b.tif`, and other georeferenced TIFFs
+
+**Solution implemented:**
+- Direct libtiff-based GeoTIFF tag copying via `clone_metadata()`
+- Registers GeoTIFF tags on source and destination files using `register_geotiff_tags_ffi()`
+- Copies all GeoTIFF standard tags:
+  - ModelPixelScaleTag (33550) - pixel size
+  - ModelTiepointTag (33922) - georeferencing tie points
+  - GeoKeyDirectoryTag (34735) - GeoTIFF directory
+  - GeoDoubleParamsTag (34736) - double parameters
+  - GeoAsciiParamsTag (34737) - ASCII parameters (EPSG codes)
+
+**Full metadata cloning:**
+The `clone_metadata()` function now copies ALL metadata including:
+- Resolution tags (XResolution, YResolution, ResolutionUnit)
+- ExtraSamples (alpha channels)
+- Colormap (palette images)
+- **GeoTIFF tags** (coordinate system, origin, pixel size)
+- ICC profile (color profiles)
+- YCbCr tags (color space)
+- CMYK/Ink tags (print color spaces)
+- ImageDescription (OME-XML metadata)
+
+**Testing:**
+- Added `mask.tif` to test images (120MB GeoTIFF file)
+- Added `test_geotiff_metadata_preservation()` integration test
+- Test validates coordinate system, origin, and pixel size preservation
+- Test result: PASSED
+
+**Note:** No external dependencies required - pure libtiff implementation.
+
+---
+
+### 2. Security Audit (v0.2.0)
 **Status:** ✅ **COMPLETED**
 
 **Audit completed for v0.2.0 release:**
