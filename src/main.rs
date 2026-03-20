@@ -5,7 +5,7 @@ mod metadata;
 mod quantize;
 
 use crate::ffi::*;
-// use crate::metadata::clone_metadata;  // Currently unused
+use crate::metadata::clone_metadata;
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -527,7 +527,7 @@ fn run_compression_pass(
             return Err(anyhow!("Failed to open source TIFF"));
         }
 
-        // Register GeoTIFF tags immediately after opening
+        // Register GeoTIFF tags to enable reading/writing GeoTIFF metadata
         crate::metadata::register_geotiff_tags_ffi(tif_src);
 
         let tmp_path = output.with_extension("tmp_tiffreducer");
@@ -548,10 +548,9 @@ fn run_compression_pass(
             return Err(anyhow!("Failed to open destination TIFF"));
         }
 
-        // Register GeoTIFF tags on destination
+        // Register GeoTIFF tags on destination for writing
         crate::metadata::register_geotiff_tags_ffi(tif_dst);
 
-        // Process all pages/IFDs
         let mut page = 0;
         loop {
             process_single_ifd(
@@ -587,7 +586,7 @@ unsafe fn process_single_ifd(
     _predictor: u16,
     level: Option<u32>,
     quantize: bool,
-    _is_first_page: bool,
+    is_first_page: bool,
 ) -> Result<()> {
     let mut w = 0u32;
     let mut h = 0u32;
@@ -628,13 +627,7 @@ unsafe fn process_single_ifd(
     // Check if source is tiled before we start processing
     let is_tiled = crate::ffi::TIFFIsTiled(tif_src) != 0;
 
-    // Skip metadata cloning for now to avoid tag conflicts
-    // We'll set all required tags individually
-    // if is_first_page {
-    //     clone_metadata(tif_src, tif_dst);
-    // }
-
-    // Set required tags for this IFD (override cloned values for current page)
+    // Set required tags for this IFD first (image structure)
     TIFFSetField(tif_dst, TIFFTAG_IMAGEWIDTH, w);
     TIFFSetField(tif_dst, TIFFTAG_IMAGELENGTH, h);
 
@@ -682,6 +675,13 @@ unsafe fn process_single_ifd(
     }
     if TIFFGetField(tif_src, TIFFTAG_RESOLUTIONUNIT, &mut resunit) != 0 {
         TIFFSetField(tif_dst, TIFFTAG_RESOLUTIONUNIT, resunit as u32);
+    }
+
+    // Clone metadata from source to destination (GeoTIFF, ICC, alpha, etc.)
+    // Only for first page to avoid duplicating file-level metadata
+    // Called after basic image structure is set up
+    if is_first_page {
+        clone_metadata(tif_src, tif_dst);
     }
 
     // Copy ImageDescription (important for OME-XML metadata)
