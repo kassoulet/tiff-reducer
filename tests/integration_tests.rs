@@ -59,6 +59,7 @@ impl CompressionTest {
         // Build first to ensure binary exists
         let build_result = std::process::Command::new("cargo")
             .arg("build")
+            .arg("--release")
             .arg("--quiet")
             .output();
 
@@ -67,7 +68,9 @@ impl CompressionTest {
             return false;
         }
 
-        let mut cmd = std::process::Command::new("target/debug/tiff-reducer");
+        // Use the configured target directory from .cargo/config.toml
+        let mut cmd =
+            std::process::Command::new("/home/gautier/target/release/tiff-reducer");
         cmd.arg("compress")
             .arg(&self.input_path)
             .arg("-o")
@@ -129,10 +132,12 @@ impl CompressionTest {
         self.get_gdalinfo(&self.output_path)
     }
 
+    #[allow(dead_code)]
     fn file_size(&self, path: &Path) -> u64 {
         fs::metadata(path).map(|m| m.len()).unwrap_or(0)
     }
 
+    #[allow(dead_code)]
     fn compression_ratio(&self) -> f64 {
         let orig_size = self.file_size(&self.input_path);
         let comp_size = self.file_size(&self.output_path);
@@ -384,6 +389,52 @@ fn test_pixel_content_preserved_lossless() {
 }
 
 // ============================================================================
+// Test GeoTIFF metadata preservation
+// ============================================================================
+
+#[test]
+fn test_geotiff_metadata_preservation() {
+    // Test with mask.tif which contains GeoTIFF tags
+    // Use absolute path to avoid libtiff issues with relative paths
+    let input_path = std::env::current_dir()
+        .expect("Should get current directory")
+        .join("tests/images/mask.tif");
+
+    if !input_path.exists() {
+        panic!("mask.tif not found in test images");
+    }
+
+    let test = CompressionTest::new(&input_path);
+
+    // Compress with Zstd (lossless)
+    assert!(test.run("zstd", Some(19)), "Compression should succeed");
+    assert!(test.output_exists(), "Output file should exist");
+
+    // Get metadata from both files
+    let orig = test
+        .original_gdalinfo()
+        .expect("Should read original metadata");
+    let comp = test
+        .compressed_gdalinfo()
+        .expect("Should read compressed metadata");
+
+    // Check dimensions match
+    assert_eq!(orig["size"], comp["size"], "Dimensions should match");
+
+    // Check coordinate system is preserved
+    let orig_cs = orig.get("coordinateSystem");
+    let comp_cs = comp.get("coordinateSystem");
+    assert!(orig_cs.is_some(), "Original should have coordinate system");
+    assert_eq!(orig_cs, comp_cs, "Coordinate system should be preserved");
+
+    // Check geoTransform is preserved (origin and pixel size)
+    let orig_gt = orig.get("geoTransform").and_then(|v| v.as_array());
+    let comp_gt = comp.get("geoTransform").and_then(|v| v.as_array());
+    assert!(orig_gt.is_some(), "Original should have geoTransform");
+    assert_eq!(orig_gt, comp_gt, "geoTransform should be preserved");
+}
+
+// ============================================================================
 // Test error handling
 // ============================================================================
 
@@ -397,7 +448,8 @@ fn test_corrupt_file_handling() {
 
     let output_path = temp_dir.path().join("output.tif");
 
-    let mut cmd = std::process::Command::new("target/debug/tiff-reducer");
+    let mut cmd =
+        std::process::Command::new("/home/gautier/target/tiff-reducer/debug/tiff-reducer");
     cmd.arg("compress")
         .arg(&corrupt_path)
         .arg("-o")
@@ -420,7 +472,8 @@ fn test_nonexistent_file_handling() {
     let temp_dir = TempDir::new().unwrap();
     let output_path = temp_dir.path().join("output.tif");
 
-    let mut cmd = std::process::Command::new("target/debug/tiff-reducer");
+    let mut cmd =
+        std::process::Command::new("/home/gautier/target/tiff-reducer/debug/tiff-reducer");
     cmd.arg("compress")
         .arg("/nonexistent/file.tif")
         .arg("-o")

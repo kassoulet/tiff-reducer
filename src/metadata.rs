@@ -11,7 +11,10 @@ static GEODOUBLEPARAMS_NAME: &[u8] = b"GeoDoubleParamsTag\0";
 static GEOASCII_NAME: &[u8] = b"GeoAsciiParamsTag\0";
 
 /// Read and clone ALL metadata from source to destination
-/// This function clones all non-conflicting metadata including GeoTIFF tags
+/// This function clones all non-conflicting metadata.
+///
+/// GeoTIFF tags (33550, 33922, 34735, 34736, 34737) are copied after being
+/// registered with libtiff via register_geotiff_tags().
 pub unsafe fn clone_metadata(src: *mut TIFF, dst: *mut TIFF) {
     // Resolution and units
     copy_tag_float(src, dst, TIFFTAG_XRESOLUTION);
@@ -150,59 +153,9 @@ pub unsafe fn copy_image_description(src: *mut TIFF, dst: *mut TIFF) {
 }
 
 /// Registers GeoTIFF tags for reading/writing with libtiff
-pub unsafe fn register_geotiff_tags(tif: *mut TIFF) {
-    // Define GeoTIFF tag field info structures
-    // Note: For fixed-size arrays, we use the actual count instead of VARIABLE
-    // ModelPixelScaleTag: 3 doubles, ModelTiepointTag: 6 doubles
-    let geotiff_field_info: [TIFFFieldInfo; 5] = [
-        TIFFFieldInfo {
-            field_tag: TIFFTAG_MODELPIXELSCALETAG,
-            field_readcount: 3, // Fixed 3 doubles
-            field_writecount: 3,
-            field_type: TIFF_TYPE_DOUBLE,
-            field_oktochange: 1,
-            field_passcount: 0, // Count is fixed, not passed
-            field_name: MODELPIXELSCALE_NAME.as_ptr() as *const c_char,
-        },
-        TIFFFieldInfo {
-            field_tag: TIFFTAG_MODELTIEPOINTTAG,
-            field_readcount: 6, // Fixed 6 doubles
-            field_writecount: 6,
-            field_type: TIFF_TYPE_DOUBLE,
-            field_oktochange: 1,
-            field_passcount: 0,
-            field_name: MODELTIEPOINT_NAME.as_ptr() as *const c_char,
-        },
-        TIFFFieldInfo {
-            field_tag: TIFFTAG_GEOKEYDIRECTORYTAG,
-            field_readcount: -3, // VARIABLE3 - variable number of shorts
-            field_writecount: -3,
-            field_type: TIFF_TYPE_SHORT,
-            field_oktochange: 1,
-            field_passcount: 1,
-            field_name: GEOKEYDIRECTORY_NAME.as_ptr() as *const c_char,
-        },
-        TIFFFieldInfo {
-            field_tag: TIFFTAG_GEODOUBLEPARAMSTAG,
-            field_readcount: -3, // VARIABLE3 - variable number of doubles
-            field_writecount: -3,
-            field_type: TIFF_TYPE_DOUBLE,
-            field_oktochange: 1,
-            field_passcount: 1,
-            field_name: GEODOUBLEPARAMS_NAME.as_ptr() as *const c_char,
-        },
-        TIFFFieldInfo {
-            field_tag: TIFFTAG_GEOASCIIPARAMSTAG,
-            field_readcount: -1, // VARIABLE - null-terminated string
-            field_writecount: -1,
-            field_type: TIFF_TYPE_ASCII,
-            field_oktochange: 1,
-            field_passcount: 0,
-            field_name: GEOASCII_NAME.as_ptr() as *const c_char,
-        },
-    ];
-
-    TIFFMergeFieldInfo(tif, geotiff_field_info.as_ptr(), 5);
+/// Note: XTIFFInitialize() is called once at program startup to register all GeoTIFF tags
+pub unsafe fn register_geotiff_tags(_tif: *mut TIFF) {
+    // No per-file initialization needed - tags are registered globally at startup
 }
 
 /// Public FFI version - registers GeoTIFF tags for reading/writing
@@ -211,57 +164,50 @@ pub unsafe fn register_geotiff_tags_ffi(tif: *mut TIFF) {
     register_geotiff_tags(tif);
 }
 
-/// Copy GeoTIFF tags using libtiff's native API
-/// Uses direct tag access for GeoTIFF standard tags
+/// Copy GeoTIFF tags using the registered tag definitions
+/// Requires that register_geotiff_tags() was called on both src and dst TIFF handles
 unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF) {
-    // GeoTIFF tag numbers (from GeoTIFF specification)
-    const MODELPIXELSCALE: u32 = 33550;
-    const MODELTIEPOINT: u32 = 33922;
-    const GEOKEYDIRECTORY: u32 = 34735;
-    const GEODOUBLEPARAMS: u32 = 34736;
-    const GEOASCII: u32 = 34737;
-
-    // Copy ModelPixelScaleTag (array of doubles)
-    let mut ps_count: u32 = 0;
-    let mut ps_data: *mut f64 = std::ptr::null_mut();
-    if TIFFGetField(src, MODELPIXELSCALE, &mut ps_count, &mut ps_data) != 0 {
-        if !ps_data.is_null() && ps_count > 0 && ps_count < 32768 {
-            TIFFSetField(dst, MODELPIXELSCALE, ps_count, ps_data);
+    // Copy ModelPixelScaleTag (array of 3 doubles)
+    let mut pixel_scale: *mut f64 = std::ptr::null_mut();
+    let mut count: u32 = 0;
+    if TIFFGetField(src, TIFFTAG_MODELPIXELSCALETAG, &mut count, &mut pixel_scale) != 0 {
+        if !pixel_scale.is_null() && count > 0 && count < 1000 {
+            let _ = crate::ffi::TIFFSetField(dst, TIFFTAG_MODELPIXELSCALETAG, count, pixel_scale);
         }
     }
 
-    // Copy ModelTiepointTag (array of doubles)
-    let mut tp_count: u32 = 0;
-    let mut tp_data: *mut f64 = std::ptr::null_mut();
-    if TIFFGetField(src, MODELTIEPOINT, &mut tp_count, &mut tp_data) != 0 {
-        if !tp_data.is_null() && tp_count > 0 && tp_count < 32768 {
-            TIFFSetField(dst, MODELTIEPOINT, tp_count, tp_data);
+    // Copy ModelTiepointTag (array of 6 doubles)
+    let mut tiepoints: *mut f64 = std::ptr::null_mut();
+    count = 0;
+    if TIFFGetField(src, TIFFTAG_MODELTIEPOINTTAG, &mut count, &mut tiepoints) != 0 {
+        if !tiepoints.is_null() && count > 0 && count < 1000 {
+            let _ = crate::ffi::TIFFSetField(dst, TIFFTAG_MODELTIEPOINTTAG, count, tiepoints);
         }
     }
 
     // Copy GeoKeyDirectoryTag (array of shorts)
-    let mut gk_count: u32 = 0;
-    let mut gk_data: *mut u16 = std::ptr::null_mut();
-    if TIFFGetField(src, GEOKEYDIRECTORY, &mut gk_count, &mut gk_data) != 0 {
-        if !gk_data.is_null() && gk_count > 0 && gk_count < 32768 {
-            TIFFSetField(dst, GEOKEYDIRECTORY, gk_count, gk_data);
+    let mut geo_keys: *mut u16 = std::ptr::null_mut();
+    count = 0;
+    if TIFFGetField(src, TIFFTAG_GEOKEYDIRECTORYTAG, &mut count, &mut geo_keys) != 0 {
+        if !geo_keys.is_null() && count > 0 && count < 10000 {
+            let _ = crate::ffi::TIFFSetField(dst, TIFFTAG_GEOKEYDIRECTORYTAG, count, geo_keys);
         }
     }
 
     // Copy GeoDoubleParamsTag (array of doubles)
-    let mut gp_count: u32 = 0;
-    let mut gp_data: *mut f64 = std::ptr::null_mut();
-    if TIFFGetField(src, GEODOUBLEPARAMS, &mut gp_count, &mut gp_data) != 0 {
-        if !gp_data.is_null() && gp_count > 0 && gp_count < 32768 {
-            TIFFSetField(dst, GEODOUBLEPARAMS, gp_count, gp_data);
+    let mut geo_doubles: *mut f64 = std::ptr::null_mut();
+    count = 0;
+    if TIFFGetField(src, TIFFTAG_GEODOUBLEPARAMSTAG, &mut count, &mut geo_doubles) != 0 {
+        if !geo_doubles.is_null() && count > 0 && count < 1000 {
+            let _ = crate::ffi::TIFFSetField(dst, TIFFTAG_GEODOUBLEPARAMSTAG, count, geo_doubles);
         }
     }
 
     // Copy GeoAsciiParamsTag (ASCII string)
-    let mut ascii_data: *mut c_char = std::ptr::null_mut();
-    if TIFFGetField(src, GEOASCII, &mut ascii_data) != 0 {
-        if !ascii_data.is_null() {
-            TIFFSetField(dst, GEOASCII, ascii_data);
+    let mut geo_ascii: *mut c_char = std::ptr::null_mut();
+    if TIFFGetField(src, TIFFTAG_GEOASCIIPARAMSTAG, &mut geo_ascii) != 0 {
+        if !geo_ascii.is_null() {
+            let _ = crate::ffi::TIFFSetField(dst, TIFFTAG_GEOASCIIPARAMSTAG, geo_ascii);
         }
     }
 }

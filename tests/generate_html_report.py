@@ -29,55 +29,67 @@ except ImportError as e:
 
 
 def get_gdalinfo_json(tiff_path: str) -> dict:
-    """Get GDAL info as JSON."""
+    """Get GDAL info as JSON with compression info."""
     try:
         result = subprocess.run(
             ["gdalinfo", "-json", tiff_path], capture_output=True, text=True, timeout=30
         )
         if result.returncode == 0:
-            return json.loads(result.stdout)
+            info = json.loads(result.stdout)
+            # Add compression info from tiffinfo if available
+            try:
+                tiff_result = subprocess.run(
+                    ["tiffinfo", tiff_path], capture_output=True, text=True, timeout=30
+                )
+                if tiff_result.returncode == 0:
+                    output = tiff_result.stdout
+                    # Extract compression scheme
+                    for line in output.split("\n"):
+                        if "Compression Scheme:" in line:
+                            comp = line.split(":")[1].strip()
+                            if "metadata" not in info:
+                                info["metadata"] = {}
+                            info["metadata"]["TIFFTAG_COMPRESSION"] = comp
+                            break
+            except Exception:
+                pass  # tiffinfo is optional
+            return info
         return {"error": result.stderr}
     except Exception as e:
         return {"error": str(e)}
 
 
 def create_thumbnail(tiff_path: str, png_path: str, size: int = 256) -> bool:
-    """Convert TIFF to PNG thumbnail."""
+    """Convert TIFF to PNG thumbnail using Pillow."""
     try:
-        ds = gdal.Open(tiff_path)
-        if not ds:
-            return False
-
-        # Read as array
-        band = ds.GetRasterBand(1)
-        data = band.ReadAsArray()
-
-        # Handle multi-band
-        if len(data.shape) == 3:
-            data = data[:3, :, :]  # Take first 3 bands
-            data = np.transpose(data, (1, 2, 0))  # HWC format
-
-        # Normalize to 0-255
-        if data.dtype != np.uint8:
-            data = ((data - data.min()) / (data.max() - data.min()) * 255).astype(
-                np.uint8
-            )
-
-        # Resize if needed
-        h, w = data.shape[:2]
-        if h > size or w > size:
-            scale = size / max(h, w)
-            new_w, new_h = int(w * scale), int(h * scale)
-            from PIL import Image
-
-            img = Image.fromarray(data)
-            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            data = np.array(img)
-
-        # Save as PNG
         from PIL import Image
 
-        img = Image.fromarray(data)
+        # Open TIFF with Pillow
+        img = Image.open(tiff_path)
+
+        # Convert to RGB if necessary (handles various bit depths and color modes)
+        if img.mode not in ("RGB", "L"):
+            if img.mode == "P":
+                img = img.convert("RGB")
+            elif img.mode == "I":
+                # 32-bit integer - normalize to 8-bit
+                img = img.point(lambda x: x >> 24 if x > 0 else 0)
+                img = img.convert("L")
+            elif img.mode == "F":
+                # 32-bit float - normalize to 8-bit
+                img = img.point(lambda x: int(x * 255))
+                img = img.convert("L")
+            else:
+                img = img.convert("RGB")
+
+        # Resize if needed
+        w, h = img.size
+        if w > size or h > size:
+            scale = size / max(w, h)
+            new_w, new_h = int(w * scale), int(h * scale)
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+        # Save as PNG
         img.save(png_path)
         return True
     except Exception:
@@ -86,19 +98,27 @@ def create_thumbnail(tiff_path: str, png_path: str, size: int = 256) -> bool:
 
 
 def create_diff_image(orig_path: str, comp_path: str, diff_path: str) -> bool:
-    """Create visual difference image."""
+    """Create visual difference image using Pillow."""
     try:
-        orig_ds = gdal.Open(orig_path)
-        comp_ds = gdal.Open(comp_path)
+        from PIL import Image
 
-        if not orig_ds or not comp_ds:
-            return False
+        # Open images with Pillow
+        orig_img = Image.open(orig_path)
+        comp_img = Image.open(comp_path)
 
-        band1 = orig_ds.GetRasterBand(1)
-        band2 = comp_ds.GetRasterBand(1)
+        # Convert both to grayscale for comparison
+        if orig_img.mode != "L":
+            orig_img = orig_img.convert("L")
+        if comp_img.mode != "L":
+            comp_img = comp_img.convert("L")
 
-        orig_arr = band1.ReadAsArray().astype(float)
-        comp_arr = band2.ReadAsArray().astype(float)
+        # Resize compressed to match original if needed
+        if orig_img.size != comp_img.size:
+            comp_img = comp_img.resize(orig_img.size, Image.Resampling.LANCZOS)
+
+        # Convert to numpy arrays
+        orig_arr = np.array(orig_img).astype(float)
+        comp_arr = np.array(comp_img).astype(float)
 
         # Calculate absolute difference
         diff_arr = np.abs(orig_arr - comp_arr)
@@ -107,8 +127,6 @@ def create_diff_image(orig_path: str, comp_path: str, diff_path: str) -> bool:
         diff_arr = np.clip(diff_arr * 10, 0, 255).astype(np.uint8)
 
         # Save as PNG
-        from PIL import Image
-
         img = Image.fromarray(diff_arr, mode="L")
         img.save(diff_path)
         return True
@@ -181,7 +199,7 @@ def compare_metadata(orig_info: dict, comp_info: dict) -> list:
     )
 
     # Compression
-    orig_comp = orig_info.get("metadata", {}).get("TIFFTAG_COMPRESSION", "None")
+    orig_comp = orig_info.get("metadata", {}).get("TIFFTAG_COMPRESSION", "Uncompressed")
     comp_comp = comp_info.get("metadata", {}).get("TIFFTAG_COMPRESSION", "Unknown")
     comparisons.append(
         {
@@ -310,6 +328,23 @@ def generate_html_report(test_results: list, output_dir: str):
 
         .error {{ background: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; }}
 
+        .filters {{
+            background: white; padding: 15px 20px; border-radius: 8px;
+            margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex; gap: 20px; align-items: center;
+        }}
+        .filter-group {{
+            display: flex; gap: 10px; align-items: center;
+        }}
+        .filter-group label {{
+            cursor: pointer; display: flex; align-items: center; gap: 5px;
+            font-weight: 500;
+        }}
+        .filter-group input[type="checkbox"] {{
+            width: 18px; height: 18px; cursor: pointer;
+        }}
+        .test-case.hidden {{ display: none; }}
+
         footer {{
             margin-top: 40px; padding-top: 20px;
             border-top: 1px solid #ddd; color: #666; font-size: 0.9em;
@@ -333,6 +368,22 @@ def generate_html_report(test_results: list, output_dir: str):
             <div class="summary-item total">
                 <div class="summary-value">{total}</div>
                 <div class="summary-label">Total</div>
+            </div>
+        </div>
+
+        <div class="filters">
+            <strong>Filter:</strong>
+            <div class="filter-group">
+                <label>
+                    <input type="checkbox" id="show-passed" checked>
+                    Show Passed ({passed})
+                </label>
+            </div>
+            <div class="filter-group">
+                <label>
+                    <input type="checkbox" id="show-failed" checked>
+                    Show Failed ({failed})
+                </label>
             </div>
         </div>
 
@@ -437,6 +488,37 @@ def generate_html_report(test_results: list, output_dir: str):
             <p>Generated by tiff-reducer HTML Test Report Generator</p>
         </footer>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const showPassed = document.getElementById('show-passed');
+            const showFailed = document.getElementById('show-failed');
+
+            function filterTests() {
+                const passedTests = document.querySelectorAll('.test-case.pass');
+                const failedTests = document.querySelectorAll('.test-case.fail');
+
+                passedTests.forEach(test => {
+                    if (showPassed.checked) {
+                        test.classList.remove('hidden');
+                    } else {
+                        test.classList.add('hidden');
+                    }
+                });
+
+                failedTests.forEach(test => {
+                    if (showFailed.checked) {
+                        test.classList.remove('hidden');
+                    } else {
+                        test.classList.add('hidden');
+                    }
+                });
+            }
+
+            showPassed.addEventListener('change', filterTests);
+            showFailed.addEventListener('change', filterTests);
+        });
+    </script>
 </body>
 </html>
 """
@@ -507,37 +589,42 @@ def run_tests(
             # Compare metadata
             comparisons = compare_metadata(orig_info, comp_info)
 
-            # Calculate quality metrics
+            # Calculate quality metrics using Pillow
             try:
-                orig_ds = gdal.Open(image_path)
-                comp_ds = gdal.Open(comp_path)
+                from PIL import Image
 
-                psnr_values = []
-                ssim_values = []
+                orig_img = Image.open(image_path)
+                comp_img = Image.open(comp_path)
 
-                for b in range(1, min(orig_ds.RasterCount, comp_ds.RasterCount) + 1):
-                    orig_arr = orig_ds.GetRasterBand(b).ReadAsArray()
-                    comp_arr = comp_ds.GetRasterBand(b).ReadAsArray()
+                # Convert to grayscale numpy arrays
+                if orig_img.mode != "L":
+                    orig_img = orig_img.convert("L")
+                if comp_img.mode != "L":
+                    comp_img = comp_img.convert("L")
 
-                    mse = np.mean(
-                        (orig_arr.astype(float) - comp_arr.astype(float)) ** 2
-                    )
-                    if mse > 0:
-                        max_val = (
-                            np.iinfo(orig_arr.dtype).max
-                            if np.issubdtype(orig_arr.dtype, np.integer)
-                            else 1.0
-                        )
-                        psnr = 10 * np.log10((max_val**2) / mse)
-                        psnr_values.append(psnr)
+                # Resize compressed to match original if needed
+                if orig_img.size != comp_img.size:
+                    comp_img = comp_img.resize(orig_img.size, Image.Resampling.LANCZOS)
 
-                    # Simple SSIM approximation
-                    ssim = 1.0 / (
-                        1.0
-                        + np.std(orig_arr.astype(float) - comp_arr.astype(float))
-                        / 255.0
-                    )
-                    ssim_values.append(ssim)
+                orig_arr = np.array(orig_img)
+                comp_arr = np.array(comp_img)
+
+                # Calculate PSNR
+                mse = np.mean((orig_arr.astype(float) - comp_arr.astype(float)) ** 2)
+                if mse > 0:
+                    max_val = np.iinfo(orig_arr.dtype).max if np.issubdtype(
+                        orig_arr.dtype, np.integer
+                    ) else 1.0
+                    psnr = 10 * np.log10((max_val**2) / mse)
+                    psnr_values = [psnr]
+                else:
+                    psnr_values = []
+
+                # Simple SSIM approximation
+                ssim = 1.0 / (
+                    1.0 + np.std(orig_arr.astype(float) - comp_arr.astype(float)) / 255.0
+                )
+                ssim_values = [ssim]
 
                 psnr = float("inf") if not psnr_values else np.mean(psnr_values)
                 ssim = np.mean(ssim_values) if ssim_values else 0
