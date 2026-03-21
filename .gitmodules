@@ -1,4 +1,4 @@
 [submodule "vendor/libtiff"]
 	path = vendor/libtiff
 	url = https://gitlab.com/libtiff/libtiff.git
-	branch = v4.7.0
+	branch = v4.7.1

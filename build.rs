@@ -18,11 +18,17 @@ fn main() {
     config.atleast_version("4.0");
 
     if config.probe("libtiff-4").is_ok() {
+        // Also link libgeotiff for GeoTIFF tag support
+        if let Ok(_) = pkg_config::Config::new().atleast_version("1.4").probe("libgeotiff") {
+            println!("cargo:rustc-link-lib=geotiff");
+        }
         return;
     }
 
     // Fallback: manual linking
     println!("cargo:rustc-link-lib=tiff");
+    // Link libgeotiff if available for GeoTIFF support
+    println!("cargo:rustc-link-lib=geotiff");
 }
 
 fn build_fully_static(out_dir: &Path, target: &str) {
@@ -280,7 +286,7 @@ fn build_libtiff(
         manifest_dir,
         "libtiff",
         "https://gitlab.com/libtiff/libtiff.git",
-        "v4.7.0",
+        "v4.7.1",
     );
 
     let mut cfg = cmake::Config::new(&source_dir);

@@ -146,6 +146,13 @@ impl CompressionFormat {
 }
 
 fn main() -> Result<()> {
+    // Initialize libgeotiff's extended TIFF tag support at program startup
+    // This registers all GeoTIFF tags (33550, 33922, 34735, 34736, 34737) with libtiff
+    // Must be called before any TIFF files are opened
+    unsafe {
+        crate::ffi::XTIFFInitialize();
+    }
+    
     env_logger::init();
 
     // Suppress libtiff warnings for unknown tags (GeoTIFF tags)
@@ -527,7 +534,7 @@ fn run_compression_pass(
             return Err(anyhow!("Failed to open source TIFF"));
         }
 
-        // Register GeoTIFF tags to enable reading/writing GeoTIFF metadata
+        // Register GeoTIFF tags on source for proper reading of GeoTIFF metadata
         crate::metadata::register_geotiff_tags_ffi(tif_src);
 
         let tmp_path = output.with_extension("tmp_tiffreducer");
@@ -548,7 +555,8 @@ fn run_compression_pass(
             return Err(anyhow!("Failed to open destination TIFF"));
         }
 
-        // Register GeoTIFF tags on destination for writing
+        // Register GeoTIFF tags on destination for proper writing of GeoTIFF metadata
+        // This must be done BEFORE setting any other tags to avoid compression reset
         crate::metadata::register_geotiff_tags_ffi(tif_dst);
 
         let mut page = 0;
@@ -627,7 +635,7 @@ unsafe fn process_single_ifd(
     // Check if source is tiled before we start processing
     let is_tiled = crate::ffi::TIFFIsTiled(tif_src) != 0;
 
-    // Set required tags for this IFD first (image structure)
+    // Set required tags for this IFD (image structure)
     TIFFSetField(tif_dst, TIFFTAG_IMAGEWIDTH, w);
     TIFFSetField(tif_dst, TIFFTAG_IMAGELENGTH, h);
 
@@ -648,20 +656,19 @@ unsafe fn process_single_ifd(
     }
 
     // For tiled images, preserve the tiled format; otherwise use strips
-    // NOTE: Currently disabled - writing tiles causes crashes with some files
-    // We read tiles but write as strips for compatibility
     if is_tiled {
-        // Get source tile dimensions (for reading only)
         let mut tile_width: u32 = 0;
         let mut tile_length: u32 = 0;
         TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width);
         TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length);
-        // Write as strips for now - more compatible
         TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h);
     } else {
-        // Set RowsPerStrip for strip-based output
         TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h);
     }
+
+    // Set compression AFTER image structure but BEFORE metadata copying
+    // Cast to i32 as required for variadic FFI functions (libtiff expects uint16_vap which is int)
+    TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as i32);
 
     // Resolution tags (optional but commonly present)
     let mut xres: f32 = 0.0;
@@ -679,40 +686,13 @@ unsafe fn process_single_ifd(
 
     // Clone metadata from source to destination (GeoTIFF, ICC, alpha, etc.)
     // Only for first page to avoid duplicating file-level metadata
-    // Called after basic image structure is set up
     if is_first_page {
         clone_metadata(tif_src, tif_dst);
     }
 
-    // Copy ImageDescription (important for OME-XML metadata)
-    // Only copy for the first page to avoid duplicating large XML blocks
-    // DISABLED: Can cause crashes with large XML metadata
-    // if is_first_page {
-    //     let mut desc: *mut c_char = std::ptr::null_mut();
-    //     if TIFFGetField(tif_src, TIFFTAG_IMAGEDESCRIPTION, &mut desc) != 0 {
-    //         if !desc.is_null() {
-    //             TIFFSetField(tif_dst, TIFFTAG_IMAGEDESCRIPTION, desc);
-    //         }
-    //     }
-    // }
-
-    // Set compression level BEFORE compression codec (required for some codecs)
-    // Note: ZSTD level tag (65564) is not supported in libtiff 4.5.1, so we skip it
-    // UPDATE: Set compression codec FIRST, then level
-    TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as u32);
-
+    // Set compression level for supported codecs
     if let Some(lvl) = level {
         match compression {
-            // COMPRESSION_ZSTD => {
-            //     // ZSTD level tag not supported in libtiff 4.5.1
-            //     // let clamped: i32 = lvl.clamp(1, 22) as i32;
-            //     // TIFFSetField(tif_dst, TIFFTAG_ZSTD_LEVEL, clamped);
-            // }
-            COMPRESSION_ADOBE_DEFLATE | COMPRESSION_LZW => {
-                let _clamped: i32 = lvl.clamp(1, 9) as i32;
-                // DISABLED: Causes crash with some TIFF files in libtiff 4.5.1
-                // TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, _clamped);
-            }
             COMPRESSION_LZMA => {
                 let clamped: i32 = lvl.clamp(1, 9) as i32;
                 TIFFSetField(tif_dst, TIFFTAG_LZMAPRESET, clamped);

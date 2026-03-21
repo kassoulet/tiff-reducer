@@ -8,12 +8,16 @@ pub enum TIFF {}
 #[repr(C)]
 pub struct TIFFFieldInfo {
     pub field_tag: u32,
-    pub field_readcount: i32,
-    pub field_writecount: i32,
-    pub field_type: u32,
-    pub field_oktochange: u32,
-    pub field_passcount: u32,
+    pub field_readcount: i16,   // short in libtiff
+    pub field_writecount: i16,  // short in libtiff
+    pub field_type: u16,        // TIFFDataType is unsigned short
+    pub field_anonymous: u32,   // added to match libtiff structure
+    pub set_get_field_type: u16, // TIFFSetGetFieldType is enum (unsigned short)
+    pub field_bit: u16,         // unsigned short in libtiff
+    pub field_oktochange: u8,   // unsigned char in libtiff
+    pub field_passcount: u8,    // unsigned char in libtiff
     pub field_name: *const c_char,
+    pub field_subfields: *mut c_void, // TIFFFieldArray* - must be NULL for simple tags
 }
 
 #[link(name = "tiff")]
@@ -67,6 +71,12 @@ extern "C" {
     pub fn TIFFWriteTile(tif: *mut TIFF, buf: *mut c_void, x: u32, y: u32, z: u16, s: u16) -> i32;
 }
 
+// GeoTIFF tag initialization from libgeotiff
+#[link(name = "geotiff")]
+extern "C" {
+    pub fn XTIFFInitialize();
+}
+
 // Suppress libtiff warnings
 pub unsafe fn suppress_warnings() {
     TIFFSetWarningHandler(None);
@@ -117,9 +127,9 @@ pub const TIFFTAG_TILEWIDTH: u32 = 322;
 pub const TIFFTAG_TILELENGTH: u32 = 323;
 
 // TIFF data types for field registration
-pub const TIFF_TYPE_DOUBLE: u32 = 12;
-pub const TIFF_TYPE_SHORT: u32 = 3;
-pub const TIFF_TYPE_ASCII: u32 = 2;
+pub const TIFF_TYPE_DOUBLE: u16 = 12;
+pub const TIFF_TYPE_SHORT: u16 = 3;
+pub const TIFF_TYPE_ASCII: u16 = 2;
 
 // Compression types
 #[allow(dead_code)]
