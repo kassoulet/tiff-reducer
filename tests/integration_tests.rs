@@ -90,7 +90,7 @@ impl CompressionTest {
 
         // Use the configured target directory from .cargo/config.toml
         let mut cmd =
-            std::process::Command::new("./target/release/tiff-reducer");
+            std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
         cmd.arg("compress")
             .arg(&self.input_path)
             .arg("-o")
@@ -488,7 +488,7 @@ fn test_corrupt_file_handling() {
     let output_path = temp_dir.path().join("output.tif");
 
     let mut cmd =
-        std::process::Command::new("./target/release/tiff-reducer");
+        std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
     cmd.arg("compress")
         .arg(&corrupt_path)
         .arg("-o")
@@ -512,7 +512,7 @@ fn test_nonexistent_file_handling() {
     let output_path = temp_dir.path().join("output.tif");
 
     let mut cmd =
-        std::process::Command::new("./target/release/tiff-reducer");
+        std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
     cmd.arg("compress")
         .arg("/nonexistent/file.tif")
         .arg("-o")

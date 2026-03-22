@@ -1,6 +1,7 @@
 #![allow(clippy::collapsible_if, dead_code)]
 
 use crate::ffi::*;
+use anyhow::{anyhow, Result};
 use libc::c_char;
 
 // Static GeoTIFF tag names (null-terminated)
@@ -15,25 +16,26 @@ static GEOASCII_NAME: &[u8] = b"GeoAsciiParamsTag\0";
 ///
 /// GeoTIFF tags (33550, 33922, 34735, 34736, 34737) are copied after being
 /// registered with libtiff via register_geotiff_tags().
-pub unsafe fn clone_metadata(src: *mut TIFF, dst: *mut TIFF) {
+pub unsafe fn clone_metadata(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     // Resolution and units
     copy_tag_float(src, dst, TIFFTAG_XRESOLUTION);
     copy_tag_float(src, dst, TIFFTAG_YRESOLUTION);
     copy_tag_u16(src, dst, TIFFTAG_RESOLUTIONUNIT);
 
     // Specialized metadata components
-    copy_extrasamples(src, dst);
-    copy_colormap(src, dst);
+    copy_extrasamples(src, dst)?;
+    copy_colormap(src, dst)?;
     copy_geotiff_tags(src, dst);
     copy_gdal_tags(src, dst);
-    copy_icc_profile(src, dst);
-    copy_ycbcr_tags(src, dst);
+    copy_icc_profile(src, dst)?;
+    copy_ycbcr_tags(src, dst)?;
     copy_cmyk_tags(src, dst);
     copy_image_description(src, dst);
+    Ok(())
 }
 
 /// Copy colormap (palette) from source to destination
-pub unsafe fn copy_colormap(src: *mut TIFF, dst: *mut TIFF) {
+pub unsafe fn copy_colormap(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     let mut rmap: *mut u16 = std::ptr::null_mut();
     let mut gmap: *mut u16 = std::ptr::null_mut();
     let mut bmap: *mut u16 = std::ptr::null_mut();
@@ -42,13 +44,16 @@ pub unsafe fn copy_colormap(src: *mut TIFF, dst: *mut TIFF) {
     if TIFFGetField(src, TIFFTAG_COLORMAP, &mut rmap, &mut gmap, &mut bmap) != 0 {
         if !rmap.is_null() && !gmap.is_null() && !bmap.is_null() {
             // Colormap has 2^16 entries for 16-bit colormap (even for 8-bit images)
-            TIFFSetField(dst, TIFFTAG_COLORMAP, rmap, gmap, bmap);
+            if TIFFSetField(dst, TIFFTAG_COLORMAP, rmap, gmap, bmap) == 0 {
+                return Err(anyhow!("Failed to set colormap"));
+            }
         }
     }
+    Ok(())
 }
 
 /// Copy ExtraSamples tag for alpha channel preservation
-pub unsafe fn copy_extrasamples(src: *mut TIFF, dst: *mut TIFF) {
+pub unsafe fn copy_extrasamples(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     let mut extra_samples: *mut u16 = std::ptr::null_mut();
     let mut count: u16 = 0;
 
@@ -56,14 +61,17 @@ pub unsafe fn copy_extrasamples(src: *mut TIFF, dst: *mut TIFF) {
     if TIFFGetField(src, TIFFTAG_EXTRASAMPLES, &mut count, &mut extra_samples) != 0 {
         if !extra_samples.is_null() && count > 0 {
             // Safety: cap count to prevent massive allocations if libtiff returns garbage
-            let safe_count = std::cmp::min(count as u32, 1024);
-            TIFFSetField(dst, TIFFTAG_EXTRASAMPLES, safe_count, extra_samples);
+            let safe_count = std::cmp::min(count as usize, 1024);
+            if TIFFSetField(dst, TIFFTAG_EXTRASAMPLES, safe_count as u32, extra_samples) == 0 {
+                return Err(anyhow!("Failed to set ExtraSamples tag"));
+            }
         }
     }
+    Ok(())
 }
 
 /// Copy ICC color profile from source to destination
-pub unsafe fn copy_icc_profile(src: *mut TIFF, dst: *mut TIFF) {
+pub unsafe fn copy_icc_profile(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     let mut profile: *mut u8 = std::ptr::null_mut();
     let mut count: u32 = 0;
 
@@ -71,25 +79,32 @@ pub unsafe fn copy_icc_profile(src: *mut TIFF, dst: *mut TIFF) {
     if TIFFGetField(src, TIFFTAG_ICCPROFILE, &mut count, &mut profile) != 0 {
         if !profile.is_null() && count > 0 && count < 100 * 1024 * 1024 {
             // 100MB limit
-            TIFFSetField(dst, TIFFTAG_ICCPROFILE, count, profile);
+            if TIFFSetField(dst, TIFFTAG_ICCPROFILE, count, profile) == 0 {
+                return Err(anyhow!("Failed to set ICC profile"));
+            }
         }
     }
+    Ok(())
 }
 
 /// Copy YCbCr color space tags
 /// Only call this when the destination is also YCbCr (not when converting to RGB)
-pub unsafe fn copy_ycbcr_tags(src: *mut TIFF, dst: *mut TIFF) {
+pub unsafe fn copy_ycbcr_tags(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     // YCbCrSubsampling (two SHORT values: horizontal, vertical)
     let mut h_sub: u16 = 0;
     let mut v_sub: u16 = 0;
     if TIFFGetField(src, TIFFTAG_YCBCRSUBSAMPLING, &mut h_sub, &mut v_sub) != 0 {
-        TIFFSetField(dst, TIFFTAG_YCBCRSUBSAMPLING, h_sub as u32, v_sub as u32);
+        if TIFFSetField(dst, TIFFTAG_YCBCRSUBSAMPLING, h_sub as u32, v_sub as u32) == 0 {
+            return Err(anyhow!("Failed to set YCbCr subsampling"));
+        }
     }
 
     // YCbCrPositioning (single SHORT value)
     let mut positioning: u16 = 0;
     if TIFFGetField(src, TIFFTAG_YCBCRPOSITION, &mut positioning) != 0 {
-        TIFFSetField(dst, TIFFTAG_YCBCRPOSITION, positioning as u32);
+        if TIFFSetField(dst, TIFFTAG_YCBCRPOSITION, positioning as u32) == 0 {
+            return Err(anyhow!("Failed to set YCbCr positioning"));
+        }
     }
 
     // YCbCrCoefficients (three FLOAT values)
@@ -104,25 +119,30 @@ pub unsafe fn copy_ycbcr_tags(src: *mut TIFF, dst: *mut TIFF) {
         &mut coeff_b,
     ) != 0
     {
-        TIFFSetField(
+        if TIFFSetField(
             dst,
             TIFFTAG_YCBCRCOEFFICIENTS,
             coeff_r as f64,
             coeff_g as f64,
             coeff_b as f64,
-        );
+        ) == 0 {
+            return Err(anyhow!("Failed to set YCbCr coefficients"));
+        }
     }
+    Ok(())
 }
 
 /// Copy YCbCr color space tags (early version called before compression setup)
 /// Only call this when the destination is also YCbCr (not when converting to RGB)
-pub unsafe fn copy_ycbcr_tags_early(src: *mut TIFF, dst: *mut TIFF) {
+pub unsafe fn copy_ycbcr_tags_early(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     // Only copy subsampling and coefficients - these are critical for YCbCr encoding
     // YCbCrPositioning can be copied later with other metadata
     let mut h_sub: u16 = 0;
     let mut v_sub: u16 = 0;
     if TIFFGetField(src, TIFFTAG_YCBCRSUBSAMPLING, &mut h_sub, &mut v_sub) != 0 {
-        TIFFSetField(dst, TIFFTAG_YCBCRSUBSAMPLING, h_sub as u32, v_sub as u32);
+        if TIFFSetField(dst, TIFFTAG_YCBCRSUBSAMPLING, h_sub as u32, v_sub as u32) == 0 {
+            return Err(anyhow!("Failed to set YCbCr subsampling"));
+        }
     }
 
     let mut coeff_r: f32 = 0.0;
@@ -136,14 +156,17 @@ pub unsafe fn copy_ycbcr_tags_early(src: *mut TIFF, dst: *mut TIFF) {
         &mut coeff_b,
     ) != 0
     {
-        TIFFSetField(
+        if TIFFSetField(
             dst,
             TIFFTAG_YCBCRCOEFFICIENTS,
             coeff_r as f64,
             coeff_g as f64,
             coeff_b as f64,
-        );
+        ) == 0 {
+            return Err(anyhow!("Failed to set YCbCr coefficients"));
+        }
     }
+    Ok(())
 }
 
 /// Copy CMYK/Ink-related tags
