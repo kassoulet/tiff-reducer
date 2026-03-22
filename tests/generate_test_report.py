@@ -308,10 +308,10 @@ def generate_report(results, all_images):
     report.append("")
     
     # Write report
-    report_path = Path('tests/TEST_REPORT.md')
+    report_path = Path('tests/README.md')
     with open(report_path, 'w') as f:
         f.write('\n'.join(report))
-    
+
     print(f"\nReport written to {report_path}")
     
     # Also print summary
