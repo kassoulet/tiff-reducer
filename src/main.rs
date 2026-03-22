@@ -12,7 +12,43 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::ffi::CString;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+/// Sanitize a filename to prevent path traversal attacks
+/// Returns None if the filename contains path separators or is invalid
+fn sanitize_filename(name: &std::ffi::OsStr) -> Option<String> {
+    let path = Path::new(name);
+    
+    // Reject paths with parent directory components (..)
+    for component in path.components() {
+        if let Component::ParentDir = component {
+            return None;
+        }
+    }
+    
+    // Reject absolute paths
+    if path.is_absolute() {
+        return None;
+    }
+    
+    // Reject paths with any directory separators
+    for component in path.components() {
+        if let Component::Normal(_) = component {
+            // OK - this is a normal filename component
+        } else {
+            return None;
+        }
+    }
+    
+    // Convert to string and reject if contains null bytes
+    name.to_str().map(|s| {
+        if s.contains('\0') {
+            None
+        } else {
+            Some(s.to_string())
+        }
+    }).flatten()
+}
 
 #[derive(Parser)]
 #[command(name = "tiff-reducer")]
@@ -197,12 +233,25 @@ fn analyze_file(path: &Path) -> Result<()> {
         let mut bps = 0u16;
         let mut spp = 0u16;
         let mut comp = 0u16;
-        let mut fmt = 0u16;
+        let mut fmt = SAMPLEFORMAT_UINT; // Default to uint
 
-        TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &mut w);
-        TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &mut h);
-        TIFFGetField(tif, TIFFTAG_BITSPERSAMPLE, &mut bps);
-        TIFFGetField(tif, TIFFTAG_SAMPLESPERPIXEL, &mut spp);
+        // Check return values for all TIFFGetField calls
+        if TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &mut w) == 0 || w == 0 {
+            TIFFClose(tif);
+            return Err(anyhow!("Failed to read image width"));
+        }
+        if TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &mut h) == 0 || h == 0 {
+            TIFFClose(tif);
+            return Err(anyhow!("Failed to read image length"));
+        }
+        if TIFFGetField(tif, TIFFTAG_BITSPERSAMPLE, &mut bps) == 0 || bps == 0 {
+            TIFFClose(tif);
+            return Err(anyhow!("Failed to read bits per sample"));
+        }
+        if TIFFGetField(tif, TIFFTAG_SAMPLESPERPIXEL, &mut spp) == 0 || spp == 0 {
+            TIFFClose(tif);
+            return Err(anyhow!("Failed to read samples per pixel"));
+        }
         TIFFGetField(tif, TIFFTAG_COMPRESSION, &mut comp);
         TIFFGetField(tif, TIFFTAG_SAMPLEFORMAT, &mut fmt);
 
@@ -268,11 +317,18 @@ fn compress_command(
                     .unwrap(),
             );
             pb.set_position(0);
-            pb.set_message(format!("Processing {:?}", file_path.file_name().unwrap()));
+            pb.set_message(format!("Processing {:?}", file_path.file_name().unwrap_or(file_path.as_os_str())));
 
             let target_output = if let Some(ref out) = output {
                 if out.is_dir() {
-                    out.join(file_path.file_name().unwrap())
+                    // Sanitize filename to prevent path traversal attacks
+                    match sanitize_filename(file_path.file_name().unwrap_or(file_path.as_os_str())) {
+                        Some(safe_name) => out.join(safe_name),
+                        None => {
+                            pb.finish_with_message(format!("Error: Invalid filename {:?}", file_path.file_name()));
+                            return;
+                        }
+                    }
                 } else {
                     out.clone()
                 }
@@ -304,7 +360,7 @@ fn compress_command(
                         };
                         println!(
                             "[{}] {} -> {} bytes ({:.1}% reduction, {})",
-                            file_path.file_name().unwrap().to_string_lossy(),
+                            file_path.file_name().unwrap_or(file_path.as_os_str()).to_string_lossy(),
                             original,
                             compressed,
                             ratio,
@@ -319,7 +375,7 @@ fn compress_command(
                         };
                         println!(
                             "\n[{}] Final: {} -> {} bytes ({:.1}% reduction, {})",
-                            file_path.file_name().unwrap().to_string_lossy(),
+                            file_path.file_name().unwrap_or(file_path.as_os_str()).to_string_lossy(),
                             original,
                             compressed,
                             ratio,
@@ -390,7 +446,7 @@ fn process_single_file(
     if extreme {
         pb.set_message(format!(
             "Extreme mode: benchmarking formats+predictors for {:?}",
-            input.file_name().unwrap()
+            input.file_name().unwrap_or(input.as_os_str())
         ));
 
         let mut combinations = Vec::new();
@@ -430,7 +486,7 @@ fn process_single_file(
         // Display results for each combination
         println!(
             "\n[{}] Extreme mode results:",
-            input.file_name().unwrap().to_string_lossy()
+            input.file_name().unwrap_or(input.as_os_str()).to_string_lossy()
         );
         for (fmt, pred, size) in &results {
             let ratio = if original_size > 0 {
@@ -453,7 +509,7 @@ fn process_single_file(
             best_format, best_predictor, best_size
         ));
     } else {
-        pb.set_message(format!("Compressing {:?}", input.file_name().unwrap()));
+        pb.set_message(format!("Compressing {:?}", input.file_name().unwrap_or(input.as_os_str())));
     }
 
     if dry_run {
@@ -482,7 +538,7 @@ fn process_single_file(
         };
         println!(
             "\n[{}] Benchmark Results:",
-            input.file_name().unwrap().to_string_lossy()
+            input.file_name().unwrap_or(input.as_os_str()).to_string_lossy()
         );
         println!("  Original size:   {} bytes", original_size);
         println!("  Compressed size: {} bytes", compressed_size);
@@ -504,10 +560,13 @@ fn get_sample_format(path: &Path) -> Result<u16> {
     unsafe {
         let tif = TIFFOpen(c_path.as_ptr(), CString::new("r")?.as_ptr());
         if tif.is_null() {
-            return Ok(SAMPLEFORMAT_UINT);
+            return Err(anyhow!("Failed to open TIFF file: {:?}", path));
         }
         let mut fmt: u16 = 0;
-        TIFFGetField(tif, TIFFTAG_SAMPLEFORMAT, &mut fmt);
+        if TIFFGetField(tif, TIFFTAG_SAMPLEFORMAT, &mut fmt) == 0 {
+            // Tag not present, default to uint
+            fmt = SAMPLEFORMAT_UINT;
+        }
         TIFFClose(tif);
         Ok(fmt)
     }
@@ -684,11 +743,16 @@ unsafe fn process_single_ifd(
     // Clone metadata from source to destination (GeoTIFF, ICC, alpha, etc.)
     // Only for first page to avoid duplicating file-level metadata
     if is_first_page {
-        clone_metadata(tif_src, tif_dst);
+        clone_metadata(tif_src, tif_dst)?;
     }
 
-    // Set compression level for supported codecs
+    // Set compression level for supported codecs with input validation
     if let Some(lvl) = level {
+        // Validate compression level to prevent potential issues
+        if lvl > 10000 {
+            return Err(anyhow!("Compression level too large: {}", lvl));
+        }
+        
         match compression {
             COMPRESSION_LZMA => {
                 let clamped: i32 = lvl.clamp(1, 9) as i32;
@@ -733,9 +797,21 @@ unsafe fn process_striped_image(
     fmt: u16,
     quantize: bool,
 ) -> Result<()> {
+    // Maximum scanline size to prevent memory exhaustion (1GB limit)
+    const MAX_SCANLINE_SIZE: usize = 1024 * 1024 * 1024;
+    
     let in_scanline = TIFFScanlineSize(tif_src) as usize;
+    
+    // Validate scanline size to prevent buffer overflow
+    if in_scanline == 0 || in_scanline > MAX_SCANLINE_SIZE {
+        return Err(anyhow!("Invalid scanline size: {}", in_scanline));
+    }
+    
+    // Check for multiplication overflow when calculating output scanline
     let out_scanline = if quantize {
-        (w * _spp as u32) as usize
+        w.checked_mul(_spp as u32)
+            .and_then(|s| s.try_into().ok())
+            .ok_or_else(|| anyhow!("Invalid image dimensions - overflow"))?
     } else {
         in_scanline
     };
@@ -786,6 +862,9 @@ unsafe fn process_tiled_image(
 ) -> Result<()> {
     // For tiled images, we use libtiff's built-in tile reading
     // and convert to scanlines for writing
+    
+    // Maximum image size to prevent memory exhaustion (4GB limit)
+    const MAX_IMAGE_SIZE: usize = 4 * 1024 * 1024 * 1024;
 
     // Get tile dimensions
     let mut tile_width: u32 = 0;
@@ -796,20 +875,32 @@ unsafe fn process_tiled_image(
         return Err(anyhow!("Failed to read tile dimensions"));
     }
 
-    // Calculate bytes per pixel and row size
+    // Calculate bytes per pixel and row size with overflow checking
     let bytes_per_sample = (bps as usize).div_ceil(8);
-    let bytes_per_pixel = bytes_per_sample * (spp as usize);
-    let row_size = w as usize * bytes_per_pixel;
+    let bytes_per_pixel = bytes_per_sample.checked_mul(spp as usize)
+        .ok_or_else(|| anyhow!("Bytes per pixel overflow"))?;
+    let row_size = (w as usize).checked_mul(bytes_per_pixel)
+        .ok_or_else(|| anyhow!("Row size overflow"))?;
+    
+    // Check total image size
+    let total_size = row_size.checked_mul(h as usize)
+        .ok_or_else(|| anyhow!("Image size overflow"))?;
+    if total_size > MAX_IMAGE_SIZE {
+        return Err(anyhow!("Image too large: {} bytes", total_size));
+    }
 
     // Create output buffer for all scanlines
-    let mut image_data = vec![0u8; row_size * h as usize];
+    let mut image_data = vec![0u8; total_size];
 
-    // Calculate number of tiles
+    // Calculate number of tiles with overflow checking
     let tiles_across = w.div_ceil(tile_width);
     let tiles_down = h.div_ceil(tile_length);
 
-    // Get tile size for buffer allocation
-    let tile_buffer_size = (tile_width * tile_length * bytes_per_pixel as u32) as usize;
+    // Get tile size for buffer allocation with overflow checking
+    let tile_buffer_size = (tile_width as usize)
+        .checked_mul(tile_length as usize)
+        .and_then(|s| s.checked_mul(bytes_per_pixel))
+        .ok_or_else(|| anyhow!("Tile buffer size overflow"))?;
     let mut tile_buf = vec![0u8; tile_buffer_size];
 
     // Read each tile and place in output buffer
@@ -834,23 +925,41 @@ unsafe fn process_tiled_image(
                 ));
             }
 
-            // Calculate tile position in image
-            let start_x = (tile_x * tile_width) as usize;
-            let start_y = (tile_y * tile_length) as usize;
+            // Calculate tile position in image with overflow checking
+            let start_x = (tile_x as usize).checked_mul(tile_width as usize)
+                .ok_or_else(|| anyhow!("Tile position overflow"))?;
+            let start_y = (tile_y as usize).checked_mul(tile_length as usize)
+                .ok_or_else(|| anyhow!("Tile position overflow"))?;
 
             // Calculate actual tile dimensions (edge tiles may be smaller)
             let actual_width = std::cmp::min(tile_width as usize, w as usize - start_x);
             let actual_height = std::cmp::min(tile_length as usize, h as usize - start_y);
 
-            // Copy tile data to image buffer row by row
-            let src_row_size = actual_width * bytes_per_pixel;
+            // Copy tile data to image buffer row by row with bounds checking
+            let src_row_size = actual_width.checked_mul(bytes_per_pixel)
+                .ok_or_else(|| anyhow!("Source row size overflow"))?;
             for row in 0..actual_height {
-                let src_start = row * src_row_size;
-                let dst_start = (start_y + row) * row_size + start_x * bytes_per_pixel;
-                let copy_len = src_row_size.min(tile_buf.len() - src_start);
-                if dst_start + copy_len <= image_data.len() {
-                    image_data[dst_start..dst_start + copy_len]
-                        .copy_from_slice(&tile_buf[src_start..src_start + copy_len]);
+                let src_start = row.checked_mul(src_row_size)
+                    .ok_or_else(|| anyhow!("Source start overflow"))?;
+                if src_start >= tile_buf.len() {
+                    continue; // Skip if source is out of bounds
+                }
+                
+                let dst_start = (start_y.checked_add(row)
+                    .ok_or_else(|| anyhow!("Destination start overflow"))?)
+                    .checked_mul(row_size)
+                    .and_then(|s| s.checked_add(start_x.checked_mul(bytes_per_pixel)?))
+                    .ok_or_else(|| anyhow!("Destination start overflow"))?;
+                
+                let remaining_buf = tile_buf.len().checked_sub(src_start)
+                    .ok_or_else(|| anyhow!("Buffer underflow"))?;
+                let copy_len = src_row_size.min(remaining_buf);
+                
+                if let Some(end) = dst_start.checked_add(copy_len) {
+                    if end <= image_data.len() {
+                        image_data[dst_start..end]
+                            .copy_from_slice(&tile_buf[src_start..src_start + copy_len]);
+                    }
                 }
             }
         }
