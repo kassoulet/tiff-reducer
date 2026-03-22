@@ -37,7 +37,7 @@ OPEN_BROWSER=false
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 # Use the configured target directory from .cargo/config.toml
-BINARY_PATH="/home/gautier/target/tiff-reducer/release/tiff-reducer"
+BINARY_PATH="$PROJECT_ROOT/target/release/tiff-reducer"
 
 # Colors for output
 RED='\033[0;31m'
