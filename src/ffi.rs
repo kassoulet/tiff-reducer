@@ -177,3 +177,7 @@ pub const TIFFTAG_INKSET: u32 = 332;
 pub const TIFFTAG_DOTRANGE: u32 = 336;
 pub const TIFFTAG_INKNAMES: u32 = 340;
 pub const TIFFTAG_NUMBEROFINKS: u32 = 345;
+
+// GDAL metadata tags
+pub const TIFFTAG_GDAL_METADATA: u32 = 42112;
+pub const TIFFTAG_GDAL_NODATA: u32 = 42113;
