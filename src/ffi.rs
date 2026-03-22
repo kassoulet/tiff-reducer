@@ -8,14 +8,14 @@ pub enum TIFF {}
 #[repr(C)]
 pub struct TIFFFieldInfo {
     pub field_tag: u32,
-    pub field_readcount: i16,   // short in libtiff
-    pub field_writecount: i16,  // short in libtiff
-    pub field_type: u16,        // TIFFDataType is unsigned short
-    pub field_anonymous: u32,   // added to match libtiff structure
+    pub field_readcount: i16,    // short in libtiff
+    pub field_writecount: i16,   // short in libtiff
+    pub field_type: u16,         // TIFFDataType is unsigned short
+    pub field_anonymous: u32,    // added to match libtiff structure
     pub set_get_field_type: u16, // TIFFSetGetFieldType is enum (unsigned short)
-    pub field_bit: u16,         // unsigned short in libtiff
-    pub field_oktochange: u8,   // unsigned char in libtiff
-    pub field_passcount: u8,    // unsigned char in libtiff
+    pub field_bit: u16,          // unsigned short in libtiff
+    pub field_oktochange: u8,    // unsigned char in libtiff
+    pub field_passcount: u8,     // unsigned char in libtiff
     pub field_name: *const c_char,
     pub field_subfields: *mut c_void, // TIFFFieldArray* - must be NULL for simple tags
 }

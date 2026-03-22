@@ -125,7 +125,8 @@ pub unsafe fn copy_ycbcr_tags(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
             coeff_r as f64,
             coeff_g as f64,
             coeff_b as f64,
-        ) == 0 {
+        ) == 0
+        {
             return Err(anyhow!("Failed to set YCbCr coefficients"));
         }
     }
@@ -162,7 +163,8 @@ pub unsafe fn copy_ycbcr_tags_early(src: *mut TIFF, dst: *mut TIFF) -> Result<()
             coeff_r as f64,
             coeff_g as f64,
             coeff_b as f64,
-        ) == 0 {
+        ) == 0
+        {
             return Err(anyhow!("Failed to set YCbCr coefficients"));
         }
     }
@@ -238,7 +240,13 @@ unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF) {
     // Copy ModelPixelScaleTag (array of 3 doubles)
     let mut pixel_scale: *mut f64 = std::ptr::null_mut();
     let mut count: u32 = 0;
-    if TIFFGetField(src, TIFFTAG_MODELPIXELSCALETAG, &mut count, &mut pixel_scale) != 0 {
+    if TIFFGetField(
+        src,
+        TIFFTAG_MODELPIXELSCALETAG,
+        &mut count,
+        &mut pixel_scale,
+    ) != 0
+    {
         if !pixel_scale.is_null() && count > 0 && count < 1000 {
             let _ = crate::ffi::TIFFSetField(dst, TIFFTAG_MODELPIXELSCALETAG, count, pixel_scale);
         }
@@ -265,7 +273,13 @@ unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF) {
     // Copy GeoDoubleParamsTag (array of doubles)
     let mut geo_doubles: *mut f64 = std::ptr::null_mut();
     count = 0;
-    if TIFFGetField(src, TIFFTAG_GEODOUBLEPARAMSTAG, &mut count, &mut geo_doubles) != 0 {
+    if TIFFGetField(
+        src,
+        TIFFTAG_GEODOUBLEPARAMSTAG,
+        &mut count,
+        &mut geo_doubles,
+    ) != 0
+    {
         if !geo_doubles.is_null() && count > 0 && count < 1000 {
             let _ = crate::ffi::TIFFSetField(dst, TIFFTAG_GEODOUBLEPARAMSTAG, count, geo_doubles);
         }

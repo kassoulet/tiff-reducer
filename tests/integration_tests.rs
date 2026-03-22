@@ -21,14 +21,14 @@ fn get_all_test_images() -> Vec<PathBuf> {
     // Known problematic test files that should be skipped
     // These files are valid images but expose limitations in tiff-reducer/libtiff
     let skip_files = [
-        "smallliz.tif",  // OJPEG compression - legacy format with limited libtiff support
-        "text.tif",  // THUNDERSCAN compression - obsolete format, file has corrupt data
-        "ycbcr-cat.tif",  // YCbCr with subsampling - causes crash in TIFFWriteDirectory
-        "zackthecat.tif",  // OJPEG + YCbCr - legacy format causes crash
-        "quad-tile.jpg.tiff",  // Tiled JPEG + YCbCr - causes crash
-        "quad-jpeg.tif",  // JPEG compression issues
-        "sample-get-lzw-stuck.tiff",  // LZW compression issues
-        "tiled-jpeg-ycbcr.tif",  // JPEG/YCbCr issues
+        "smallliz.tif",       // OJPEG compression - legacy format with limited libtiff support
+        "text.tif",           // THUNDERSCAN compression - obsolete format, file has corrupt data
+        "ycbcr-cat.tif",      // YCbCr with subsampling - causes crash in TIFFWriteDirectory
+        "zackthecat.tif",     // OJPEG + YCbCr - legacy format causes crash
+        "quad-tile.jpg.tiff", // Tiled JPEG + YCbCr - causes crash
+        "quad-jpeg.tif",      // JPEG compression issues
+        "sample-get-lzw-stuck.tiff", // LZW compression issues
+        "tiled-jpeg-ycbcr.tif", // JPEG/YCbCr issues
     ];
 
     let mut files = Vec::new();
@@ -51,7 +51,11 @@ fn get_all_test_images() -> Vec<PathBuf> {
     }
 
     files.sort();
-    eprintln!("Found {} test images (excluding {} known problematic files)", files.len(), skip_files.len());
+    eprintln!(
+        "Found {} test images (excluding {} known problematic files)",
+        files.len(),
+        skip_files.len()
+    );
     files
 }
 
@@ -89,8 +93,7 @@ impl CompressionTest {
         }
 
         // Use the configured target directory from .cargo/config.toml
-        let mut cmd =
-            std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
         cmd.arg("compress")
             .arg(&self.input_path)
             .arg("-o")
@@ -326,7 +329,10 @@ fn test_pixel_content_preserved_lossless() {
         let comp = match test.compressed_gdalinfo() {
             Some(info) => info,
             None => {
-                eprintln!("FAIL (no gdalinfo compressed): {:?}", image_path.file_name());
+                eprintln!(
+                    "FAIL (no gdalinfo compressed): {:?}",
+                    image_path.file_name()
+                );
                 fail_count += 1;
                 continue;
             }
@@ -336,7 +342,10 @@ fn test_pixel_content_preserved_lossless() {
         let orig_bands = match orig["bands"].as_array() {
             Some(bands) => bands,
             None => {
-                eprintln!("FAIL (no bands array original): {:?}", image_path.file_name());
+                eprintln!(
+                    "FAIL (no bands array original): {:?}",
+                    image_path.file_name()
+                );
                 skipped_count += 1;
                 continue;
             }
@@ -345,7 +354,10 @@ fn test_pixel_content_preserved_lossless() {
         let comp_bands = match comp["bands"].as_array() {
             Some(bands) => bands,
             None => {
-                eprintln!("FAIL (no bands array compressed): {:?}", image_path.file_name());
+                eprintln!(
+                    "FAIL (no bands array compressed): {:?}",
+                    image_path.file_name()
+                );
                 fail_count += 1;
                 continue;
             }
@@ -487,8 +499,7 @@ fn test_corrupt_file_handling() {
 
     let output_path = temp_dir.path().join("output.tif");
 
-    let mut cmd =
-        std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
     cmd.arg("compress")
         .arg(&corrupt_path)
         .arg("-o")
@@ -511,8 +522,7 @@ fn test_nonexistent_file_handling() {
     let temp_dir = TempDir::new().unwrap();
     let output_path = temp_dir.path().join("output.tif");
 
-    let mut cmd =
-        std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
     cmd.arg("compress")
         .arg("/nonexistent/file.tif")
         .arg("-o")
