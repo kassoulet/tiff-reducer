@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned for v0.4.0
+- **Security Remediation**: Address 18 security audit findings
+  - Phase 1: Critical fixes (path traversal, FFI return checking)
+  - Phase 2: High severity issues
+  - Phase 3: Medium severity issues
+  - Phase 4: Low severity issues
+
+---
+
+## [0.3.0] - 2026-03-22
+
 ### Security
 - **Security Audit (March 2026)**: Comprehensive audit identified 18 issues
   - 2 Critical: path traversal, unchecked FFI return values
@@ -38,8 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Integration Tests**: 6/6 passing
 - **Image Compression**: 292/304 (96% success rate)
 - **Known Issues**: 12 files skipped (corrupt/unsupported formats)
-
-## [0.3.0] - 2026-03-22
 
 ### Added
 
