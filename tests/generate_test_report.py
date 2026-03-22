@@ -25,8 +25,9 @@ def get_tiffinfo(filepath):
 
 def test_compression(input_path, output_path, format='zstd', level=19):
     """Test compression of a single file."""
+    # Use cargo to run the binary (works for both dev and release builds)
     cmd = [
-        './target/release/tiff-reducer',
+        'cargo', 'run', '--release', '--quiet', '--',
         'compress',
         str(input_path),
         '-o', str(output_path),
