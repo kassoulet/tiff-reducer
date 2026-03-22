@@ -41,6 +41,54 @@ A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency
 
 See [SECURITY.md](SECURITY.md) for detailed audit findings and remediation status.
 
+## Usage
+
+### Compress a file (Overwrites by default)
+```bash
+tiff-reducer compress image.tif
+```
+
+### With specific format and level
+```bash
+tiff-reducer compress input.tif --output optimized.tif --format zstd --level 22
+```
+
+### Extreme Optimization with Quantization
+```bash
+tiff-reducer compress input.tif --output optimized.tif --extreme --quantize
+```
+
+### Benchmark Mode (timing and throughput)
+```bash
+tiff-reducer compress input.tif --output optimized.tif --benchmark
+```
+
+### Dry-run Mode (benchmark without writing)
+```bash
+tiff-reducer compress input.tif --dry-run --benchmark
+```
+
+### Control Parallelism (default: number of CPUs)
+```bash
+tiff-reducer compress ./input_folder --output ./output_folder --jobs 4
+```
+
+### LERC Compression (for scientific data)
+```bash
+tiff-reducer compress input.tif --output optimized.tif --format lerc
+tiff-reducer compress input.tif --output optimized.tif --format lerc-zstd
+```
+
+### Analyze Metadata
+```bash
+tiff-reducer analyze image.tif
+```
+
+### Process a directory
+```bash
+tiff-reducer compress ./input_folder --output ./output_folder --extreme
+```
+
 ## Test Results
 
 ### Integration Tests (v0.3.0)
@@ -171,54 +219,6 @@ open tests/report/index.html         # macOS (manual)
 - OME-TIFF files (microscopy data)
 - GeoTIFF files (geospatial data)
 - Various compression formats (LZW, Deflate, JPEG, etc.)
-
-## Usage
-
-### Compress a file (Overwrites by default)
-```bash
-tiff-reducer compress image.tif
-```
-
-### With specific format and level
-```bash
-tiff-reducer compress input.tif --output optimized.tif --format zstd --level 22
-```
-
-### Extreme Optimization with Quantization
-```bash
-tiff-reducer compress input.tif --output optimized.tif --extreme --quantize
-```
-
-### Benchmark Mode (timing and throughput)
-```bash
-tiff-reducer compress input.tif --output optimized.tif --benchmark
-```
-
-### Dry-run Mode (benchmark without writing)
-```bash
-tiff-reducer compress input.tif --dry-run --benchmark
-```
-
-### Control Parallelism (default: number of CPUs)
-```bash
-tiff-reducer compress ./input_folder --output ./output_folder --jobs 4
-```
-
-### LERC Compression (for scientific data)
-```bash
-tiff-reducer compress input.tif --output optimized.tif --format lerc
-tiff-reducer compress input.tif --output optimized.tif --format lerc-zstd
-```
-
-### Analyze Metadata
-```bash
-tiff-reducer analyze image.tif
-```
-
-### Process a directory
-```bash
-tiff-reducer compress ./input_folder --output ./output_folder --extreme
-```
 
 ## Subcommands & Options
 
