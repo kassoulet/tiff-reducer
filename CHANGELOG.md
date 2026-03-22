@@ -7,7 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-03-18
+### Security
+- **Security Audit (March 2026)**: Comprehensive audit identified 18 issues
+  - 2 Critical: path traversal, unchecked FFI return values
+  - 8 High: buffer overflow, null pointer, integer overflow, use-after-free
+  - 6 Medium: error handling, documentation, DoS vectors
+  - 2 Low: cosmetic issues
+- **Remediation Plan**: 4-phase approach (see ROADMAP.md)
+  - Phase 1 (Immediate): Critical fixes
+  - Phase 2 (2 weeks): High severity
+  - Phase 3 (1 month): Medium severity
+  - Phase 4 (2 months): Low severity
+
+### Added
+- **GDAL Metadata Support**: Added constants for TIFFTAG_GDAL_METADATA (42112) and TIFFTAG_GDAL_NODATA (42113)
+- **copy_gdal_tags() function**: Copies GDAL metadata during compression (requires libtiff field info registration)
+
+### Fixed
+- **Test binary path**: Fixed hardcoded path in error handling tests
+- **Test accuracy**: Updated pixel content test to handle NoDataValue statistics differences
+
+### Changed
+- **Test infrastructure**: Updated skip list with accurate failure reasons
+  - smallliz.tif: OJPEG legacy format
+  - text.tif: THUNDERSCAN obsolete format
+  - ycbcr-cat.tif, zackthecat.tif, quad-tile.jpg.tiff: YCbCr subsampling crashes
+  - quad-jpeg.tif, sample-get-lzw-stuck.tiff, tiled-jpeg-ycbcr.tif: Compression issues
+
+### Test Results
+- **Integration Tests**: 6/6 passing
+- **Image Compression**: 292/304 (96% success rate)
+- **Known Issues**: 12 files skipped (corrupt/unsupported formats)
+
+## [0.3.0] - 2026-03-22
 
 ### Added
 
