@@ -4,6 +4,28 @@ This document lists future features and known limitations to address in future r
 
 ---
 
+## Current Release: v0.3.0
+
+### Completed in v0.3.0 (2026-03-18)
+- ✅ GeoTIFF metadata preservation (all 5 tags)
+- ✅ HTML visual test reports
+- ✅ Tiled image processing
+- ✅ Multi-page TIFF support
+- ✅ BigTIFF support
+- ✅ Alpha channel preservation
+- ✅ YCbCr tag preservation
+- ✅ CMYK/ICC profile preservation
+- ✅ OME-XML preservation
+
+### In Progress (v0.4.0 - Security Remediation)
+- ⚠️ Security audit remediation (18 issues identified)
+  - Phase 1: Critical fixes (path traversal, FFI return checking)
+  - Phase 2: High severity (8 issues)
+  - Phase 3: Medium severity (6 issues)
+  - Phase 4: Low severity (2 issues)
+
+---
+
 ## High Priority
 
 ### 1. GeoTIFF Support
@@ -155,7 +177,7 @@ See `SECURITY.md` for detailed findings and remediation status.
 
 ---
 
-### 5. OME-TIFF Support
+### 7. OME-TIFF Support
 **Status:** ✅ **COMPLETED** (v0.2.0)
 
 **Issue:** OME-TIFF (Open Microscopy Environment) files have custom metadata.
@@ -180,7 +202,7 @@ See `SECURITY.md` for detailed findings and remediation status.
 
 ## Medium Priority
 
-### 6. YCbCr Color Space Handling
+### 8. YCbCr Color Space Handling
 **Status:** ✅ **COMPLETED**
 
 **Issue:** Some TIFF files use YCbCr photometric interpretation.
@@ -200,7 +222,7 @@ See `SECURITY.md` for detailed findings and remediation status.
 
 ---
 
-### 7. CMYK and ICC Color Profiles
+### 9. CMYK and ICC Color Profiles
 **Status:** ✅ **COMPLETED**
 
 **Issue:** CMYK images and ICC color profiles may not be preserved.
@@ -232,7 +254,7 @@ See `SECURITY.md` for detailed findings and remediation status.
 
 ## Low Priority
 
-### 9. JPEG Compression Quality
+### 11. JPEG Compression Quality
 **Issue:** JPEG quality setting uses same tag as Deflate level.
 
 **Problem:**
@@ -245,7 +267,7 @@ See `SECURITY.md` for detailed findings and remediation status.
 
 ---
 
-### 10. WebP Compression
+### 12. WebP Compression
 **Issue:** WebP compression support is defined but not well tested.
 
 **Tags:**
@@ -259,7 +281,7 @@ pub const COMPRESSION_WEBP: u16 = 50001;
 
 ---
 
-### 11. LERC Compression
+### 13. LERC Compression
 **Status:** ✅ **COMPLETED**
 
 **Use case:** Scientific data with bounded error tolerance
@@ -278,7 +300,7 @@ pub const COMPRESSION_LERC_ZSTD: u16 = 50004;
 
 ---
 
-### 12. JPEG-XL Compression
+### 14. JPEG-XL Compression
 **Status:** ✅ **COMPLETED**
 
 **Use case:** Modern high-efficiency compression
@@ -296,7 +318,7 @@ pub const COMPRESSION_JPEGXL: u16 = 50005;
 
 ---
 
-### 13. BigTIFF Support
+### 15. BigTIFF Support
 **Issue:** BigTIFF (>4GB files) handling may need improvement.
 
 **Current status:** Basic support exists (`"w8"` mode)
