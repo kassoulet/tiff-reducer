@@ -25,6 +25,7 @@ pub unsafe fn clone_metadata(src: *mut TIFF, dst: *mut TIFF) {
     copy_extrasamples(src, dst);
     copy_colormap(src, dst);
     copy_geotiff_tags(src, dst);
+    copy_gdal_tags(src, dst);
     copy_icc_profile(src, dst);
     copy_ycbcr_tags(src, dst);
     copy_cmyk_tags(src, dst);
@@ -76,6 +77,7 @@ pub unsafe fn copy_icc_profile(src: *mut TIFF, dst: *mut TIFF) {
 }
 
 /// Copy YCbCr color space tags
+/// Only call this when the destination is also YCbCr (not when converting to RGB)
 pub unsafe fn copy_ycbcr_tags(src: *mut TIFF, dst: *mut TIFF) {
     // YCbCrSubsampling (two SHORT values: horizontal, vertical)
     let mut h_sub: u16 = 0;
@@ -91,6 +93,38 @@ pub unsafe fn copy_ycbcr_tags(src: *mut TIFF, dst: *mut TIFF) {
     }
 
     // YCbCrCoefficients (three FLOAT values)
+    let mut coeff_r: f32 = 0.0;
+    let mut coeff_g: f32 = 0.0;
+    let mut coeff_b: f32 = 0.0;
+    if TIFFGetField(
+        src,
+        TIFFTAG_YCBCRCOEFFICIENTS,
+        &mut coeff_r,
+        &mut coeff_g,
+        &mut coeff_b,
+    ) != 0
+    {
+        TIFFSetField(
+            dst,
+            TIFFTAG_YCBCRCOEFFICIENTS,
+            coeff_r as f64,
+            coeff_g as f64,
+            coeff_b as f64,
+        );
+    }
+}
+
+/// Copy YCbCr color space tags (early version called before compression setup)
+/// Only call this when the destination is also YCbCr (not when converting to RGB)
+pub unsafe fn copy_ycbcr_tags_early(src: *mut TIFF, dst: *mut TIFF) {
+    // Only copy subsampling and coefficients - these are critical for YCbCr encoding
+    // YCbCrPositioning can be copied later with other metadata
+    let mut h_sub: u16 = 0;
+    let mut v_sub: u16 = 0;
+    if TIFFGetField(src, TIFFTAG_YCBCRSUBSAMPLING, &mut h_sub, &mut v_sub) != 0 {
+        TIFFSetField(dst, TIFFTAG_YCBCRSUBSAMPLING, h_sub as u32, v_sub as u32);
+    }
+
     let mut coeff_r: f32 = 0.0;
     let mut coeff_g: f32 = 0.0;
     let mut coeff_b: f32 = 0.0;
@@ -152,10 +186,21 @@ pub unsafe fn copy_image_description(src: *mut TIFF, dst: *mut TIFF) {
     }
 }
 
+/// Copy GDAL metadata tags (NoDataValue and XML metadata)
+/// These tags require manual registration with libtiff
+/// For now, skip copying as the registration is causing issues
+/// TODO: Fix GDAL tag registration with proper libtiff field info structure
+pub unsafe fn copy_gdal_tags(_src: *mut TIFF, _dst: *mut TIFF) {
+    // GDAL tags are not supported yet - requires proper libtiff field info structure
+    // The NoDataValue will be lost, but pixel data is preserved
+}
+
 /// Registers GeoTIFF tags for reading/writing with libtiff
 /// Note: XTIFFInitialize() is called once at program startup to register all GeoTIFF tags
+/// GDAL tags (42112, 42113) are not supported yet - requires proper libtiff field info structure
 pub unsafe fn register_geotiff_tags(_tif: *mut TIFF) {
-    // No per-file initialization needed - tags are registered globally at startup
+    // GeoTIFF tags are registered globally by XTIFFInitialize()
+    // GDAL tags require manual registration but is disabled due to crashes
 }
 
 /// Public FFI version - registers GeoTIFF tags for reading/writing
