@@ -53,21 +53,143 @@ Please include:
 4. **Run in sandbox**: Consider running in a container or sandbox for untrusted inputs
 5. **Enable fuzzing**: Use the provided fuzz tests to validate error handling
 
-### Security Audit Findings (v0.2.0-pre) - RESOLVED
+---
 
-All vulnerabilities identified during the v0.2.0 pre-release audit have been addressed:
-- **RESOLVED: Out-of-Bounds Reads in `metadata.rs`**: Manual TIFF parser replaced with `libtiff`'s native API.
-- **RESOLVED: Memory Safety / DoS Vulnerabilities**: Added strict bounds checking for all metadata allocations.
-- **RESOLVED: FFI Buffer Safety Risks**: Added validation of bytes read from `libtiff` and checked return values for all critical FFI calls.
-- **RESOLVED: Lack of BigTIFF Support**: Native `libtiff` API now handles BigTIFF offsets and entries correctly.
-- **RESOLVED: Ignored FFI Return Values**: All critical FFI calls now have their return values validated.
+## Security Audit - March 2026
+
+A comprehensive security audit was performed on 2026-03-22, identifying 18 security issues across the codebase.
+
+### Audit Summary
+
+| Severity | Count | Status |
+|----------|-------|--------|
+| Critical | 2 | ⚠️ Identified |
+| High | 8 | ⚠️ Identified |
+| Medium | 6 | ⚠️ Identified |
+| Low | 2 | ⚠️ Identified |
+
+### Critical Findings
+
+#### 1. Unchecked FFI Return Value in TIFFSetField (metadata.rs:47-50)
+
+**Issue:** The return value of `TIFFSetField` is ignored in `copy_colormap()`. If the set operation fails, the destination TIFF may be left in an inconsistent state.
+
+**Status:** ⚠️ **Requires Fix**
+
+**Recommended Fix:**
+```rust
+if TIFFSetField(dst, TIFFTAG_COLORMAP, rmap, gmap, bmap) == 0 {
+    return Err(anyhow!("Failed to set colormap"));
+}
+```
+
+#### 2. Path Traversal Vulnerability (main.rs:268-278)
+
+**Issue:** User-controlled file names are directly joined with output paths without sanitization. An attacker could craft a file name like `../../../etc/passwd` to write outside the intended directory.
+
+**Status:** ⚠️ **Requires Fix**
+
+**Recommended Fix:**
+```rust
+fn sanitize_filename(name: &std::ffi::OsStr) -> Option<String> {
+    let path = Path::new(name);
+    for component in path.components() {
+        if let Component::ParentDir = component {
+            return None;  // Reject paths with ".."
+        }
+    }
+    name.to_str().map(|s| s.to_string())
+}
+```
+
+### High Severity Findings
+
+| # | Issue | File | Status |
+|---|-------|------|--------|
+| 3 | Buffer overflow via unvalidated scanline size | main.rs:693-701 | ⚠️ Requires Fix |
+| 4 | Null pointer dereference in analyze_file | main.rs:183-203 | ⚠️ Requires Fix |
+| 5 | Use-after-free risk in metadata copying | metadata.rs:56-65 | ⚠️ Requires Fix |
+| 6 | Integer overflow in tiled image processing | main.rs:800-805 | ⚠️ Requires Fix |
+| 7 | Missing bounds check in tile processing | main.rs:827-832 | ⚠️ Requires Fix |
+| 8 | Unvalidated compression level input | main.rs:637-646 | ⚠️ Requires Fix |
+
+### Medium Severity Findings
+
+| # | Issue | File | Status |
+|---|-------|------|--------|
+| 9 | Information leakage in error messages | main.rs:253-258 | ⚠️ Requires Fix |
+| 10 | Panic on unwrap in file processing | main.rs:265 | ⚠️ Requires Fix |
+| 11 | Missing validation in get_sample_format | main.rs:508-517 | ⚠️ Requires Fix |
+| 12 | Missing unsafe documentation | main.rs:569 | ⚠️ Requires Fix |
+| 13 | DoS via temp file exhaustion (extreme mode) | main.rs:389-420 | ⚠️ Requires Fix |
+| 14 | Unchecked TIFFReadDirectory return value | main.rs:556-559 | ⚠️ Requires Fix |
+
+### Low Severity Findings
+
+| # | Issue | File | Status |
+|---|-------|------|--------|
+| 15 | Hardcoded path in integration tests | integration_tests.rs:89 | ℹ️ Cosmetic |
+| 16 | Missing input validation for empty files | main.rs:536-540 | ℹ️ Minor |
+| 17 | Inconsistent safety annotation | quantize.rs:5-7 | ℹ️ Documentation |
+| 18 | ICC profile size check weakness | metadata.rs:77-82 | ℹ️ Minor |
 
 ---
 
-### Audit History
+## Remediation Plan
 
-- **2026-03-13**: Internal security audit and remediation.
-  - Resolved all critical and high-risk vulnerabilities identified in the pre-release audit.
-  - Refactored `metadata.rs` for native `libtiff` tag handling.
-  - Hardened FFI boundaries with comprehensive error checking.
-  - Verified compilation and basic functionality after security overhaul.
+### Phase 1: Critical Fixes (Immediate)
+- [ ] Fix path traversal vulnerability with filename sanitization
+- [ ] Add return value checking for all TIFFSetField calls
+
+### Phase 2: High Severity (Within 2 weeks)
+- [ ] Add bounds checking for FFI-returned sizes
+- [ ] Implement integer overflow protection with `checked_*` methods
+- [ ] Copy FFI pointers to local buffers before cross-handle use
+- [ ] Add null pointer validation in analyze_file
+
+### Phase 3: Medium Severity (Within 1 month)
+- [ ] Implement structured error handling with sanitized messages
+- [ ] Replace all `unwrap()` calls with proper error handling
+- [ ] Add safety documentation to all `unsafe` functions
+- [ ] Use temporary directories with automatic cleanup
+- [ ] Distinguish EOF from error conditions in directory reading
+
+### Phase 4: Low Severity (Within 2 months)
+- [ ] Remove hardcoded paths from tests
+- [ ] Add minimum file size validation
+- [ ] Review and fix safety annotations
+- [ ] Strengthen ICC profile size validation
+
+---
+
+## Previous Audit History
+
+### Audit - 2026-03-13: Internal Security Audit
+
+All vulnerabilities identified during the v0.2.0 pre-release audit were addressed:
+- **RESOLVED**: Out-of-Bounds reads in `metadata.rs` - Manual TIFF parser replaced with libtiff's native API
+- **RESOLVED**: Memory Safety / DoS vulnerabilities - Added strict bounds checking for all metadata allocations
+- **RESOLVED**: FFI Buffer Safety Risks - Added validation of bytes read from libtiff
+- **RESOLVED**: Lack of BigTIFF Support - Native libtiff API now handles BigTIFF correctly
+- **RESOLVED**: Ignored FFI Return Values - All critical FFI calls now have return values validated
+
+---
+
+## Security Testing Recommendations
+
+### For Developers
+1. Run `cargo audit` regularly to check for dependency vulnerabilities
+2. Use `cargo fuzz` with libFuzzer to test edge cases
+3. Enable all clippy lints: `cargo clippy -- -D warnings`
+4. Run tests with MIRI for undefined behavior detection: `cargo +nightly miri test`
+
+### For Users
+1. Process files in a sandboxed environment (container, VM, or sandbox)
+2. Implement file size limits appropriate for your use case
+3. Validate output files before further processing
+4. Monitor for unusual resource consumption during processing
+
+---
+
+*Last updated: 2026-03-22*
+*Next scheduled audit: 2026-06-22*

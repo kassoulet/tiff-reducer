@@ -62,7 +62,46 @@ None - GeoTIFF compression and metadata preservation both work correctly with li
 
 ---
 
-### 2. BigTIFF Support
+### 3. Security Audit (v0.3.0) - March 2026
+**Status:** ⚠️ **IN PROGRESS** - 18 issues identified, remediation planned
+
+**Comprehensive security audit completed on 2026-03-22:**
+
+**Critical Issues (2):**
+- ⚠️ **Path Traversal Vulnerability** (main.rs:268-278): User-controlled filenames can write outside intended directory
+- ⚠️ **Unchecked TIFFSetField Return Value** (metadata.rs:47-50): Failed set operations leave TIFF in inconsistent state
+
+**High Severity Issues (8):**
+- ⚠️ Buffer overflow via unvalidated scanline size
+- ⚠️ Null pointer dereference in analyze_file
+- ⚠️ Use-after-free risk in metadata copying
+- ⚠️ Integer overflow in tiled image processing
+- ⚠️ Missing bounds checks in tile processing
+- ⚠️ Unvalidated compression level input
+
+**Medium Severity Issues (6):**
+- ⚠️ Information leakage in error messages
+- ⚠️ Panic on unwrap in file processing
+- ⚠️ Missing validation in get_sample_format
+- ⚠️ Missing unsafe documentation
+- ⚠️ DoS via temp file exhaustion (extreme mode)
+- ⚠️ Unchecked TIFFReadDirectory return value
+
+**Low Severity Issues (2):**
+- ℹ️ Hardcoded path in integration tests
+- ℹ️ Missing input validation for empty files
+
+**Remediation Plan:**
+- **Phase 1 (Immediate)**: Fix path traversal and TIFFSetField return checking
+- **Phase 2 (2 weeks)**: Address all high severity issues
+- **Phase 3 (1 month)**: Address medium severity issues
+- **Phase 4 (2 months)**: Address low severity issues
+
+See `SECURITY.md` for detailed findings and remediation status.
+
+---
+
+### 4. BigTIFF Support
 **Status:** ✅ **COMPLETED**
 
 **Solution implemented:**
@@ -71,7 +110,7 @@ None - GeoTIFF compression and metadata preservation both work correctly with li
 
 ---
 
-### 3. Alpha Channel / ExtraSamples Handling
+### 5. Alpha Channel / ExtraSamples Handling
 **Status:** ✅ **COMPLETED**
 
 **Issue:** Alpha channels were not properly preserved during compression.
@@ -85,7 +124,7 @@ None - GeoTIFF compression and metadata preservation both work correctly with li
 
 ---
 
-### 4. Multi-Page TIFF (MP-TIFF) Support
+### 6. Multi-Page TIFF (MP-TIFF) Support
 **Status:** ✅ **COMPLETED** (v0.2.0)
 
 **Issue:** Multi-page TIFF files were skipped during processing.

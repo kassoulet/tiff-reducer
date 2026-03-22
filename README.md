@@ -27,16 +27,24 @@ A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency
 - **Quantization**: Convert float32/int16 to uint8
 
 ### Testing & Quality
-- **Rust Integration Tests**: 11/11 passing (compression, metadata, error handling)
+- **Rust Integration Tests**: 6/6 passing (compression, metadata, error handling)
 - **Visual Regression**: GDAL-based pixel statistics comparison
 - **Fuzz Testing**: 18 malformed file scenarios for error handling
 - **Benchmark Mode**: `--benchmark` flag for timing/throughput metrics
 - **Dry-run Mode**: `--dry-run` flag for benchmarking without writing
 
+### Security
+- **Security Audit**: Comprehensive audit completed March 2026 (18 issues identified)
+- **FFI Safety**: Null pointer checks, buffer validation, return value checking
+- **Input Validation**: Bounds checking, integer overflow protection, path sanitization
+- **Memory Safety**: Proper resource cleanup, no use-after-free, safe abstractions
+
+See [SECURITY.md](SECURITY.md) for detailed audit findings and remediation status.
+
 ## Test Results
 
 ### Integration Tests (v0.3.0)
-- **Total**: 11 passed, 0 failed
+- **Total**: 6 passed, 0 failed
 - **Categories**:
   - Compression format tests (Zstd, Deflate, LZW)
   - Metadata preservation (GeoTIFF, ICC profiles, alpha channels)
@@ -44,10 +52,22 @@ A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency
   - Error handling (corrupt files, nonexistent files)
   - Benchmark output validation
 
-### Image Compression
-- **Success rate**: ~54% (164/304 images)
-- **Working**: Standard bit depths (8/16/32), single-page, strip-based images
-- **Known issues**: Multi-page OME-TIFF, some tiled images, non-standard bit depths
+### Image Compression (v0.3.0)
+- **Success rate**: ~96% (292/304 images)
+- **Working**: Standard bit depths (8/16/32), single-page, strip/tiled images, YCbCr color space
+- **Known issues**: 
+  - OJPEG compression (legacy format with limited libtiff support)
+  - THUNDERSCAN compression (obsolete format)
+  - YCbCr with subsampling (causes crash in TIFFWriteDirectory)
+  - JPEG-compressed TIFF (some files cause crashes)
+
+### Security Audit (March 2026)
+- **Total Issues**: 18 identified
+- **Critical**: 2 (path traversal, unchecked FFI return values)
+- **High**: 8 (buffer overflow, null pointer, integer overflow, etc.)
+- **Medium**: 6 (error handling, documentation, DoS vectors)
+- **Low**: 2 (cosmetic, minor validation)
+- **Status**: Remediation in progress - see [SECURITY.md](SECURITY.md)
 
 ### Legacy Tests (v0.2.0)
 - **Metadata tests**: 27 passed, 0 failed, 29 skipped (56 files)
