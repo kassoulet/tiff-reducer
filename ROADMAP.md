@@ -20,11 +20,86 @@ This document lists future features and known limitations to address in future r
 - ✅ libgeotiff integration
 
 ### In Progress (v0.4.0 - Security Remediation)
-- ⚠️ Security audit remediation (18 issues identified)
-  - Phase 1: Critical fixes (path traversal, FFI return checking)
-  - Phase 2: High severity (8 issues)
-  - Phase 3: Medium severity (6 issues)
-  - Phase 4: Low severity (2 issues)
+
+**Security Audit Completed:** March 2026 (18 issues identified)
+
+#### Phase 1: Critical Fixes (Immediate - v0.4.0)
+- ⚠️ **Path Traversal Vulnerability** (main.rs:268-278)
+  - User-controlled filenames can write outside intended directory
+  - Fix: Sanitize filenames before path joining
+  - Impact: Could allow writing to arbitrary filesystem locations
+  
+- ⚠️ **Unchecked TIFFSetField Return Value** (metadata.rs:47-50)
+  - Failed set operations leave TIFF in inconsistent state
+  - Fix: Check return values and handle errors
+  - Impact: Memory corruption potential
+
+#### Phase 2: High Severity (2 weeks - v0.4.1)
+- ⚠️ **Buffer Overflow via Unvalidated Scanline Size** (main.rs:693-701)
+  - `TIFFScanlineSize` returns untrusted value from file headers
+  - Fix: Add bounds checking before allocation
+  
+- ⚠️ **Null Pointer Dereference in analyze_file** (main.rs:183-203)
+  - `TIFFGetField` return values not checked
+  - Fix: Validate all FFI return values
+  
+- ⚠️ **Use-After-Free Risk in Metadata Copying** (metadata.rs:56-65)
+  - FFI pointers used across TIFF handles
+  - Fix: Copy data to local buffers first
+  
+- ⚠️ **Integer Overflow in Tiled Image Processing** (main.rs:800-805)
+  - Multiplication can overflow for large tiles
+  - Fix: Use `checked_mul()` for all size calculations
+  
+- ⚠️ **Missing Bounds Check in Tile Processing** (main.rs:827-832)
+  - Buffer access without proper bounds validation
+  - Fix: Add overflow-safe bounds checking
+  
+- ⚠️ **Unvalidated Compression Level Input** (main.rs:637-646)
+  - No validation before passing to libtiff
+  - Fix: Add input validation at CLI parsing level
+
+#### Phase 3: Medium Severity (1 month - v0.4.2)
+- ⚠️ **Information Leakage in Error Messages** (main.rs:253-258)
+  - Error messages may include internal paths
+  - Fix: Sanitize user-facing error messages
+  
+- ⚠️ **Panic on Unwrap in File Processing** (main.rs:265)
+  - `unwrap()` on `file_name()` can panic
+  - Fix: Use proper error handling
+  
+- ⚠️ **Missing Validation in get_sample_format** (main.rs:508-517)
+  - Silent fallback on file open failure
+  - Fix: Return error when file cannot be opened
+  
+- ⚠️ **Missing Unsafe Documentation** (main.rs:569)
+  - `unsafe fn` without safety documentation
+  - Fix: Add safety documentation to all unsafe functions
+  
+- ⚠️ **DoS via Temp File Exhaustion** (main.rs:389-420)
+  - `fs::remove_file` failures not handled in extreme mode
+  - Fix: Use temp directories with automatic cleanup
+  
+- ⚠️ **Unchecked TIFFReadDirectory Return Value** (main.rs:556-559)
+  - Errors not distinguished from EOF
+  - Fix: Check for error conditions
+
+#### Phase 4: Low Severity (2 months - v0.4.3)
+- ℹ️ **Hardcoded Path in Integration Tests** (integration_tests.rs:89)
+  - Non-portable test configuration
+  - Fix: Use relative paths or environment variables
+  
+- ℹ️ **Missing Input Validation for Empty Files** (main.rs:536-540)
+  - Empty files processed without validation
+  - Fix: Add minimum file size check
+
+**Remediation Timeline:**
+- **v0.4.0** (Immediate): Phase 1 - Critical fixes
+- **v0.4.1** (2 weeks): Phase 2 - High severity
+- **v0.4.2** (1 month): Phase 3 - Medium severity
+- **v0.4.3** (2 months): Phase 4 - Low severity
+
+See [SECURITY.md](SECURITY.md) for detailed findings and status.
 
 ---
 
