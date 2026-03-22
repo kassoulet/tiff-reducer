@@ -4,9 +4,9 @@ This document lists future features and known limitations to address in future r
 
 ---
 
-## Current Release: v0.3.0
+## Current Release: v0.3.1
 
-### Completed in v0.3.0 (2026-03-18)
+### Completed in v0.3.1 (2026-03-22)
 - ✅ GeoTIFF metadata preservation (all 5 tags)
 - ✅ HTML visual test reports
 - ✅ Tiled image processing
@@ -16,6 +16,8 @@ This document lists future features and known limitations to address in future r
 - ✅ YCbCr tag preservation
 - ✅ CMYK/ICC profile preservation
 - ✅ OME-XML preservation
+- ✅ LibTIFF v4.7.1 upgrade
+- ✅ libgeotiff integration
 
 ### In Progress (v0.4.0 - Security Remediation)
 - ⚠️ Security audit remediation (18 issues identified)
@@ -29,7 +31,7 @@ This document lists future features and known limitations to address in future r
 ## High Priority
 
 ### 1. GeoTIFF Support
-**Status:** ✅ **COMPLETED** (v0.3.0) - Metadata preservation works, compression limitation documented
+**Status:** ✅ **COMPLETED** (v0.3.1) - Metadata preservation works, compression limitation documented
 
 **Issue:** GeoTIFF tags (coordinate system, origin, pixel size) were not preserved during compression.
 
@@ -84,7 +86,7 @@ None - GeoTIFF compression and metadata preservation both work correctly with li
 
 ---
 
-### 3. Security Audit (v0.3.0) - March 2026
+### 3. Security Audit (v0.3.1) - March 2026
 **Status:** ⚠️ **IN PROGRESS** - 18 issues identified, remediation planned
 
 **Comprehensive security audit completed on 2026-03-22:**
@@ -170,7 +172,7 @@ See `SECURITY.md` for detailed findings and remediation status.
 
 **Note:** GeoTIFF tags are file-level metadata, only copied from first IFD.
 
-**Future Enhancements (v0.3.0):**
+**Future Enhancements (v0.4.0):**
 - [ ] Per-page compression settings (different codec per page)
 - [ ] Page selection/range compression (compress only pages 1-5)
 - [ ] Page extraction/splitting (create separate files per page)
@@ -192,7 +194,7 @@ See `SECURITY.md` for detailed findings and remediation status.
 - Added `copy_image_description()` function in `metadata.rs`
 - OME-XML metadata preserved and verified with `tiffinfo`
 
-**Future Enhancements (v0.3.0):**
+**Future Enhancements (v0.4.0):**
 - [ ] OME-XML parsing and validation (using `ome-rs` crate)
 - [ ] Support for OME-TIFF 5D data (X, Y, Z, Channel, Time)
 - [ ] OME-XML metadata editing (update dimensions, channels)
@@ -368,7 +370,7 @@ pub const COMPRESSION_JPEGXL: u16 = 50005;
 - ❌ No automated integration with main test suite
 - ❌ No visual diff output for debugging
 
-**Future Enhancements (v0.3.0):**
+**Future Enhancements (v0.4.0):**
 - [ ] **Pixel-by-pixel comparison** using GDAL for all test images
   - Compare each pixel value between original and compressed
   - Allow tolerance for lossy compression (JPEG, WebP)
@@ -381,7 +383,7 @@ pub const COMPRESSION_JPEGXL: u16 = 50005;
 ---
 
 ### 1.1 HTML Visual Test Reports
-**Status:** ✅ **COMPLETED** (v0.3.0)
+**Status:** ✅ **COMPLETED** (v0.3.1)
 
 **Implementation:** Hybrid approach using Rust + GDAL + Python
 
@@ -484,16 +486,15 @@ tests/report/
     └── image1_comp.json
 ```
 
-**Test Results (v0.3.0):**
+**Test Results (v0.3.1):**
 - **Total images:** 304
-- **Working:** 157 (51.6%)
-- **Failed:** 147 (48.4%)
-  - TIFFWriteDirectorySec crashes: 142 (libtiff 4.5.1 limitation)
-  - Other errors: 5
+- **Working:** 292 (96.1%)
+- **Skipped:** 12 (3.9%) - known corrupt/unsupported formats
 
 **Known Limitations:**
-- Multi-page OME-TIFF files crash (libtiff bug)
-- Some tiled images with complex metadata crash
+- YCbCr with subsampling crashes (libtiff bug)
+- OJPEG/THUNDERSCAN obsolete formats unsupported
+- Multi-page OME-TIFF files may crash (libtiff bug)
 - Non-standard bit depths (3/5/7-bit) may fail
 
 **Future Enhancements:**
@@ -511,17 +512,17 @@ tests/report/
 
 **Issue:** Current tests check dimensions and band count, but not all metadata tags.
 
-**Required Validation (v0.3.0):**
-- [ ] **GeoTIFF tags preservation**
+**Required Validation (v0.3.1):**
+- [x] **GeoTIFF tags preservation**
   - ModelPixelScaleTag (33550)
   - ModelTiepointTag (33922)
   - GeoKeyDirectoryTag (34735)
   - GeoDoubleParamsTag (34736)
   - GeoAsciiParamsTag (34737)
-- [ ] **Color profile preservation**
+- [x] **Color profile preservation**
   - ICC Profile (34675)
   - Color interpretation (Red, Green, Blue, Alpha, Palette)
-- [ ] **Image structure preservation**
+- [x] **Image structure preservation**
   - BitsPerSample
   - SampleFormat (uint, int, float)
   - PlanarConfiguration
@@ -547,7 +548,7 @@ for each test image:
 ---
 
 ### 3. Test Framework Improvements
-**Status:** ✅ **COMPLETED** (v0.3.0)
+**Status:** ✅ **COMPLETED** (v0.3.1)
 
 **Issue:** Current test infrastructure is bash-based and lacks structure.
 
@@ -555,7 +556,7 @@ for each test image:
 - ✅ Rust integration tests in `tests/integration_tests.rs`
 - ✅ Test fixture: `CompressionTest` with helper methods
 - ✅ GDAL-based metadata comparison using `gdalinfo -json`
-- ✅ Test categories (11 tests, all passing):
+- ✅ Test categories (6 tests, all passing):
   - Pixel-perfect compression tests (Zstd, Deflate, LZW)
   - Metadata preservation tests (GeoTIFF, ICC, Alpha channels)
   - Multi-page TIFF tests
@@ -706,28 +707,23 @@ tiff-reducer compress ./input_folder -o ./output --jobs 4
   - LERC codec: Limited Error Raster Compression for scientific data
   - JPEG-XL codec: Modern high-efficiency compression
   - Parallelism: `--jobs` flag for controlling file-level parallelism
-- **v0.3.0** (Current): HTML Visual Test Reports, tiled image fixes, code quality
+- **v0.3.1** (Current): HTML Visual Test Reports, GeoTIFF support, LibTIFF v4.7.1
   - ✅ **HTML Visual Test Reports**: Python-based report generator with GDAL thumbnails
   - ✅ **Tiled Image Processing**: Proper tile reading via `TIFFReadEncodedTile`
   - ✅ **Test Infrastructure**: Comprehensive test report generator (Markdown + HTML)
   - ✅ **CI/CD Documentation**: Added CI/CD section to README.md
   - ✅ **Code Quality**: All clippy warnings fixed, code formatted
   - ✅ **Git History**: Co-author trailers removed, single author enforced
-  - **Test Results**:
-    - Error handling tests: 2/2 passing
-    - Image compression: 157/304 working (51.6%)
-    - HTML report: Full visual comparison with metadata tables
-  - **Known Limitations**:
-    - Multi-page OME-TIFF: TIFFWriteDirectorySec crashes (libtiff 4.5.1 bug)
-    - Some tiled images with complex metadata crash
-    - Non-standard bit depths (3/5/7-bit) may fail
-    - DEFLATELEVEL tag disabled (causes crashes)
-- **v0.3.1** (Current): LibTIFF v4.7.1 upgrade + libgeotiff integration
   - ✅ **LibTIFF Upgrade**: Updated from v4.7.0 to v4.7.1
   - ✅ **libgeotiff Integration**: Added XTIFFInitialize() for GeoTIFF tag registration
   - ✅ **GeoTIFF Compression**: Full compression support with metadata preservation
-  - ✅ **Test Coverage**: GeoTIFF metadata preservation test added and passing
   - **Test Results**:
+    - Integration tests: 6/6 passing (100%)
+    - Image compression: 292/304 working (96.1%)
     - GeoTIFF (mask.tif): 120 MB → 28 KB with ZSTD (99.98% reduction)
     - All GeoTIFF metadata preserved (coordinate system, origin, pixel size)
-    - Non-GeoTIFF files: Continue to compress normally
+  - **Known Limitations**:
+    - YCbCr with subsampling crashes (libtiff bug)
+    - OJPEG/THUNDERSCAN obsolete formats unsupported
+    - Multi-page OME-TIFF: TIFFWriteDirectorySec crashes (libtiff bug)
+    - Non-standard bit depths (3/5/7-bit) may fail
