@@ -18,19 +18,19 @@ use std::path::{Component, Path, PathBuf};
 /// Returns None if the filename contains path separators or is invalid
 fn sanitize_filename(name: &std::ffi::OsStr) -> Option<String> {
     let path = Path::new(name);
-    
+
     // Reject paths with parent directory components (..)
     for component in path.components() {
         if let Component::ParentDir = component {
             return None;
         }
     }
-    
+
     // Reject absolute paths
     if path.is_absolute() {
         return None;
     }
-    
+
     // Reject paths with any directory separators
     for component in path.components() {
         if let Component::Normal(_) = component {
@@ -39,15 +39,15 @@ fn sanitize_filename(name: &std::ffi::OsStr) -> Option<String> {
             return None;
         }
     }
-    
+
     // Convert to string and reject if contains null bytes
-    name.to_str().map(|s| {
+    name.to_str().and_then(|s| {
         if s.contains('\0') {
             None
         } else {
             Some(s.to_string())
         }
-    }).flatten()
+    })
 }
 
 #[derive(Parser)]
@@ -188,7 +188,7 @@ fn main() -> Result<()> {
     unsafe {
         crate::ffi::XTIFFInitialize();
     }
-    
+
     env_logger::init();
 
     // Suppress libtiff warnings for unknown tags (GeoTIFF tags)
@@ -317,15 +317,22 @@ fn compress_command(
                     .unwrap(),
             );
             pb.set_position(0);
-            pb.set_message(format!("Processing {:?}", file_path.file_name().unwrap_or(file_path.as_os_str())));
+            pb.set_message(format!(
+                "Processing {:?}",
+                file_path.file_name().unwrap_or(file_path.as_os_str())
+            ));
 
             let target_output = if let Some(ref out) = output {
                 if out.is_dir() {
                     // Sanitize filename to prevent path traversal attacks
-                    match sanitize_filename(file_path.file_name().unwrap_or(file_path.as_os_str())) {
+                    match sanitize_filename(file_path.file_name().unwrap_or(file_path.as_os_str()))
+                    {
                         Some(safe_name) => out.join(safe_name),
                         None => {
-                            pb.finish_with_message(format!("Error: Invalid filename {:?}", file_path.file_name()));
+                            pb.finish_with_message(format!(
+                                "Error: Invalid filename {:?}",
+                                file_path.file_name()
+                            ));
                             return;
                         }
                     }
@@ -360,7 +367,10 @@ fn compress_command(
                         };
                         println!(
                             "[{}] {} -> {} bytes ({:.1}% reduction, {})",
-                            file_path.file_name().unwrap_or(file_path.as_os_str()).to_string_lossy(),
+                            file_path
+                                .file_name()
+                                .unwrap_or(file_path.as_os_str())
+                                .to_string_lossy(),
                             original,
                             compressed,
                             ratio,
@@ -375,7 +385,10 @@ fn compress_command(
                         };
                         println!(
                             "\n[{}] Final: {} -> {} bytes ({:.1}% reduction, {})",
-                            file_path.file_name().unwrap_or(file_path.as_os_str()).to_string_lossy(),
+                            file_path
+                                .file_name()
+                                .unwrap_or(file_path.as_os_str())
+                                .to_string_lossy(),
                             original,
                             compressed,
                             ratio,
@@ -486,7 +499,10 @@ fn process_single_file(
         // Display results for each combination
         println!(
             "\n[{}] Extreme mode results:",
-            input.file_name().unwrap_or(input.as_os_str()).to_string_lossy()
+            input
+                .file_name()
+                .unwrap_or(input.as_os_str())
+                .to_string_lossy()
         );
         for (fmt, pred, size) in &results {
             let ratio = if original_size > 0 {
@@ -509,7 +525,10 @@ fn process_single_file(
             best_format, best_predictor, best_size
         ));
     } else {
-        pb.set_message(format!("Compressing {:?}", input.file_name().unwrap_or(input.as_os_str())));
+        pb.set_message(format!(
+            "Compressing {:?}",
+            input.file_name().unwrap_or(input.as_os_str())
+        ));
     }
 
     if dry_run {
@@ -538,7 +557,10 @@ fn process_single_file(
         };
         println!(
             "\n[{}] Benchmark Results:",
-            input.file_name().unwrap_or(input.as_os_str()).to_string_lossy()
+            input
+                .file_name()
+                .unwrap_or(input.as_os_str())
+                .to_string_lossy()
         );
         println!("  Original size:   {} bytes", original_size);
         println!("  Compressed size: {} bytes", compressed_size);
@@ -752,7 +774,7 @@ unsafe fn process_single_ifd(
         if lvl > 10000 {
             return Err(anyhow!("Compression level too large: {}", lvl));
         }
-        
+
         match compression {
             COMPRESSION_LZMA => {
                 let clamped: i32 = lvl.clamp(1, 9) as i32;
@@ -799,14 +821,14 @@ unsafe fn process_striped_image(
 ) -> Result<()> {
     // Maximum scanline size to prevent memory exhaustion (1GB limit)
     const MAX_SCANLINE_SIZE: usize = 1024 * 1024 * 1024;
-    
+
     let in_scanline = TIFFScanlineSize(tif_src) as usize;
-    
+
     // Validate scanline size to prevent buffer overflow
     if in_scanline == 0 || in_scanline > MAX_SCANLINE_SIZE {
         return Err(anyhow!("Invalid scanline size: {}", in_scanline));
     }
-    
+
     // Check for multiplication overflow when calculating output scanline
     let out_scanline = if quantize {
         w.checked_mul(_spp as u32)
@@ -862,7 +884,7 @@ unsafe fn process_tiled_image(
 ) -> Result<()> {
     // For tiled images, we use libtiff's built-in tile reading
     // and convert to scanlines for writing
-    
+
     // Maximum image size to prevent memory exhaustion (4GB limit)
     const MAX_IMAGE_SIZE: usize = 4 * 1024 * 1024 * 1024;
 
@@ -877,13 +899,16 @@ unsafe fn process_tiled_image(
 
     // Calculate bytes per pixel and row size with overflow checking
     let bytes_per_sample = (bps as usize).div_ceil(8);
-    let bytes_per_pixel = bytes_per_sample.checked_mul(spp as usize)
+    let bytes_per_pixel = bytes_per_sample
+        .checked_mul(spp as usize)
         .ok_or_else(|| anyhow!("Bytes per pixel overflow"))?;
-    let row_size = (w as usize).checked_mul(bytes_per_pixel)
+    let row_size = (w as usize)
+        .checked_mul(bytes_per_pixel)
         .ok_or_else(|| anyhow!("Row size overflow"))?;
-    
+
     // Check total image size
-    let total_size = row_size.checked_mul(h as usize)
+    let total_size = row_size
+        .checked_mul(h as usize)
         .ok_or_else(|| anyhow!("Image size overflow"))?;
     if total_size > MAX_IMAGE_SIZE {
         return Err(anyhow!("Image too large: {} bytes", total_size));
@@ -926,9 +951,11 @@ unsafe fn process_tiled_image(
             }
 
             // Calculate tile position in image with overflow checking
-            let start_x = (tile_x as usize).checked_mul(tile_width as usize)
+            let start_x = (tile_x as usize)
+                .checked_mul(tile_width as usize)
                 .ok_or_else(|| anyhow!("Tile position overflow"))?;
-            let start_y = (tile_y as usize).checked_mul(tile_length as usize)
+            let start_y = (tile_y as usize)
+                .checked_mul(tile_length as usize)
                 .ok_or_else(|| anyhow!("Tile position overflow"))?;
 
             // Calculate actual tile dimensions (edge tiles may be smaller)
@@ -936,25 +963,30 @@ unsafe fn process_tiled_image(
             let actual_height = std::cmp::min(tile_length as usize, h as usize - start_y);
 
             // Copy tile data to image buffer row by row with bounds checking
-            let src_row_size = actual_width.checked_mul(bytes_per_pixel)
+            let src_row_size = actual_width
+                .checked_mul(bytes_per_pixel)
                 .ok_or_else(|| anyhow!("Source row size overflow"))?;
             for row in 0..actual_height {
-                let src_start = row.checked_mul(src_row_size)
+                let src_start = row
+                    .checked_mul(src_row_size)
                     .ok_or_else(|| anyhow!("Source start overflow"))?;
                 if src_start >= tile_buf.len() {
                     continue; // Skip if source is out of bounds
                 }
-                
-                let dst_start = (start_y.checked_add(row)
+
+                let dst_start = (start_y
+                    .checked_add(row)
                     .ok_or_else(|| anyhow!("Destination start overflow"))?)
-                    .checked_mul(row_size)
-                    .and_then(|s| s.checked_add(start_x.checked_mul(bytes_per_pixel)?))
-                    .ok_or_else(|| anyhow!("Destination start overflow"))?;
-                
-                let remaining_buf = tile_buf.len().checked_sub(src_start)
+                .checked_mul(row_size)
+                .and_then(|s| s.checked_add(start_x.checked_mul(bytes_per_pixel)?))
+                .ok_or_else(|| anyhow!("Destination start overflow"))?;
+
+                let remaining_buf = tile_buf
+                    .len()
+                    .checked_sub(src_start)
                     .ok_or_else(|| anyhow!("Buffer underflow"))?;
                 let copy_len = src_row_size.min(remaining_buf);
-                
+
                 if let Some(end) = dst_start.checked_add(copy_len) {
                     if end <= image_data.len() {
                         image_data[dst_start..end]
