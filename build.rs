@@ -19,7 +19,11 @@ fn main() {
 
     if config.probe("libtiff-4").is_ok() {
         // Also link libgeotiff for GeoTIFF tag support
-        if let Ok(_) = pkg_config::Config::new().atleast_version("1.4").probe("libgeotiff") {
+        if pkg_config::Config::new()
+            .atleast_version("1.4")
+            .probe("libgeotiff")
+            .is_ok()
+        {
             println!("cargo:rustc-link-lib=geotiff");
         }
         return;
