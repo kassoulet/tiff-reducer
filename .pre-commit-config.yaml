@@ -37,13 +37,13 @@ repos:
         always_run: true
 
     -   id: cargo-test
-        name: Cargo Test (All Tests)
+        name: Cargo Test (All Tests + Report)
         entry: bash -c 'cargo test --test integration_tests && python3 tests/generate_test_report.py'
         language: system
         types: [rust]
         pass_filenames: false
         always_run: true
-        stages: [pre-commit]
+        stages: [pre-push]
 
     -   id: black
         name: Black (Python Formatter)
