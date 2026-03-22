@@ -1,10 +1,10 @@
-# Release Checklist for v0.3.0
+# Release Checklist for v0.3.1
 
-This document tracks the release readiness of tiff-reducer v0.3.0.
+This document tracks the release readiness of tiff-reducer v0.3.1.
 
 ## Version Information
 
-- **Version**: 0.3.0
+- **Version**: 0.3.1
 - **Release Date**: 2026-03-22
 - **Previous Version**: 0.2.0 (2026-03-13)
 
@@ -24,14 +24,14 @@ This document tracks the release readiness of tiff-reducer v0.3.0.
 - [x] CHANGELOG.md follows Keep a Changelog format
 - [x] ROADMAP.md aligned with current status
 - [x] SECURITY.md includes audit findings
-- [x] Test reports generated (TEST_REPORT.md)
+- [x] Test reports generated (tests/README.md)
 - [x] Thumbnail images for GitHub display
 
 ### Version Consistency
-- [x] Cargo.toml: version = "0.3.0"
-- [x] CHANGELOG.md: [0.3.0] section complete
-- [x] ROADMAP.md: v0.3.0 marked as completed
-- [x] README.md: References v0.3.0
+- [x] Cargo.toml: version = "0.3.1"
+- [x] CHANGELOG.md: [0.3.1] section complete
+- [x] ROADMAP.md: v0.3.1 marked as completed
+- [x] README.md: References v0.3.1
 
 ### Testing
 - [x] Integration tests: 6/6 passing
@@ -47,10 +47,10 @@ This document tracks the release readiness of tiff-reducer v0.3.0.
 - [x] Known limitations documented
 
 ### Build Verification
-- [ ] Release build compiles: `cargo build --release`
+- [x] Release build compiles: `cargo build --release`
 - [ ] Vendored build works: `cargo build --release --features vendored`
 - [ ] Docker build works (if applicable)
-- [ ] Binary runs: `tiff-reducer --version`
+- [ ] Binary runs: `tiff-reducer --help`
 
 ### Git Repository
 - [x] All changes committed
@@ -63,8 +63,8 @@ This document tracks the release readiness of tiff-reducer v0.3.0.
 ## Release Artifacts
 
 ### Expected Outputs
-- [ ] GitHub release: v0.3.0
-- [ ] Git tag: v0.3.0
+- [ ] GitHub release: v0.3.1
+- [ ] Git tag: v0.3.1
 - [ ] crates.io publish: `cargo publish`
 - [ ] Release notes published
 
@@ -95,8 +95,8 @@ This document tracks the release readiness of tiff-reducer v0.3.0.
 
 ### Create Git Tag
 ```bash
-git tag -a v0.3.0 -m "Release v0.3.0 - HTML Visual Test Reports, Security Audit"
-git push origin v0.3.0
+git tag -a v0.3.1 -m "Release v0.3.1 - HTML Visual Test Reports, GeoTIFF Support, LibTIFF v4.7.1"
+git push origin v0.3.1
 ```
 
 ### Publish to crates.io
@@ -115,9 +115,9 @@ cargo publish
 ### Create GitHub Release
 1. Go to https://github.com/kassoulet/tiff-reducer/releases
 2. Click "Create a new release"
-3. Tag version: v0.3.0
+3. Tag version: v0.3.1
 4. Target: develop branch
-5. Release title: v0.3.0 - HTML Visual Test Reports
+5. Release title: v0.3.1 - HTML Visual Test Reports, GeoTIFF Support
 6. Copy changelog from CHANGELOG.md
 7. Attach binaries (optional)
 
@@ -140,22 +140,25 @@ cargo publish
 
 ## Release Notes Summary
 
-### What's New in v0.3.0
+### What's New in v0.3.1
 
 **Major Features:**
 - HTML Visual Test Reports with side-by-side image comparisons
+- GeoTIFF compression and metadata preservation (libgeotiff integration)
+- LibTIFF v4.7.1 upgrade (vendored)
 - Improved tiled TIFF processing
-- GDAL metadata tag support (42112, 42113)
 
 **Test Coverage:**
-- 6/6 integration tests passing
+- 6/6 integration tests passing (100%)
 - 292/304 images compress successfully (96.1%)
-- Full GeoTIFF metadata preservation
+- Full GeoTIFF metadata preservation (coordinate system, origin, pixel size)
+- 559 thumbnail images for visual comparison
 
 **Documentation:**
 - Comprehensive security audit (18 issues documented)
 - Updated README with usage examples
-- Test reports with thumbnail images for GitHub
+- Test reports with GitHub-friendly formatting (tests/README.md)
+- Security policy updated (SECURITY.md)
 
 **Known Limitations:**
 - YCbCr with subsampling causes libtiff crash (upstream bug)
@@ -165,4 +168,5 @@ cargo publish
 ---
 
 *Checklist created: 2026-03-22*
+*Last updated: 2026-03-22 (v0.3.1)*
 *Release manager: Gautier Portet*
