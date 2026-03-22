@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     libjpeg-dev \
     libwebp-dev \
     libdeflate-dev \
+    libgeotiff-dev \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,6 +33,7 @@ RUN apt-get update && apt-get install -y \
     libjpeg62-turbo \
     libwebp7 \
     libdeflate0 \
+    libgeotiff5 \
     zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
