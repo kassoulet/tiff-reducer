@@ -1,6 +1,6 @@
 [package]
 name = "tiff-reducer"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Gautier Portet <kassoulet@gmail.com>"]
 description = "High-performance TIFF optimizer using Zstd/LZMA with metadata preservation and GeoTIFF support."
