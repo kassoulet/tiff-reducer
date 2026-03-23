@@ -812,7 +812,8 @@ unsafe fn process_single_ifd(
             PREDICTOR_FLOATINGPOINT => {
                 // Floating point predictor only works with IEEE floating point samples
                 // Supported bit depths: 16 (half), 24, 32 (single), 64 (double)
-                if fmt == SAMPLEFORMAT_IEEEFP && (bps == 16 || bps == 24 || bps == 32 || bps == 64) {
+                if fmt == SAMPLEFORMAT_IEEEFP && (bps == 16 || bps == 24 || bps == 32 || bps == 64)
+                {
                     PREDICTOR_FLOATINGPOINT
                 } else {
                     PREDICTOR_NONE
