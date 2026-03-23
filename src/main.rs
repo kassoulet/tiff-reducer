@@ -672,7 +672,7 @@ unsafe fn process_single_ifd(
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
     compression: u16,
-    _predictor: u16,
+    requested_predictor: u16,
     level: Option<u32>,
     quantize: bool,
     is_first_page: bool,
@@ -819,14 +819,47 @@ unsafe fn process_single_ifd(
     }
 
     // Validate predictor for bit depth and sample format
-    // Horizontal predictor only works with 8, 16, and 32-bit unsigned integer samples
-    // For non-standard bit depths or signed/float formats, use no predictor
-    // NOTE: Currently disabled by default as it causes crashes with some libtiff versions
-    let final_predictor = PREDICTOR_NONE;
+    // Predictors only work with certain compression formats (LZW, Deflate, Zstd, LZMA, etc.)
+    let final_predictor = if matches!(
+        compression,
+        COMPRESSION_LZW
+            | COMPRESSION_ADOBE_DEFLATE
+            | COMPRESSION_ZSTD
+            | COMPRESSION_LZMA
+            | COMPRESSION_JPEGXL
+    ) {
+        match requested_predictor {
+            PREDICTOR_HORIZONTAL => {
+                // Horizontal predictor works with 8, 16, and 32-bit integer samples
+                if (bps == 8 || bps == 16 || bps == 32)
+                    && (fmt == SAMPLEFORMAT_UINT || fmt == SAMPLEFORMAT_INT)
+                {
+                    PREDICTOR_HORIZONTAL
+                } else {
+                    PREDICTOR_NONE
+                }
+            }
+            PREDICTOR_FLOATINGPOINT => {
+                // Floating point predictor only works with IEEE floating point samples
+                // Supported bit depths: 16 (half), 24, 32 (single), 64 (double)
+                if fmt == SAMPLEFORMAT_IEEEFP && (bps == 16 || bps == 24 || bps == 32 || bps == 64)
+                {
+                    PREDICTOR_FLOATINGPOINT
+                } else {
+                    PREDICTOR_NONE
+                }
+            }
+            _ => PREDICTOR_NONE,
+        }
+    } else {
+        PREDICTOR_NONE
+    };
 
     // Set predictor (compression was already set earlier)
-    if TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, final_predictor as u32) == 0 {
-        return Err(anyhow!("Failed to set predictor"));
+    if final_predictor != PREDICTOR_NONE {
+        if TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, final_predictor as u32) == 0 {
+            return Err(anyhow!("Failed to set predictor"));
+        }
     }
 
     // Write image data
@@ -837,7 +870,7 @@ unsafe fn process_single_ifd(
     }
 
     if TIFFWriteDirectory(tif_dst) == 0 {
-        return Err(anyhow!("Failed to write TIFF directory"));
+        return Err(anyhow!("Failed to write directory"));
     }
     Ok(())
 }
