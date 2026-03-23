@@ -743,7 +743,7 @@ unsafe fn process_single_ifd(
     // For single-sample images, libtiff expects PLANARCONFIG_CONTIG
     if planar != 0 && spp > 1 {
         if TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32) == 0 {
-            return Err(anyhow!("Failed to set planar config"));
+            return Err(anyhow!("Failed to set planar configuration"));
         }
     }
 
@@ -765,7 +765,7 @@ unsafe fn process_single_ifd(
     // Set compression AFTER image structure but BEFORE metadata copying
     // Cast to i32 as required for variadic FFI functions (libtiff expects uint16_vap which is int)
     if TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as i32) == 0 {
-        return Err(anyhow!("Failed to set compression"));
+        return Err(anyhow!("Failed to set compression codec"));
     }
 
     // Resolution tags (optional but commonly present)
