@@ -717,20 +717,34 @@ unsafe fn process_single_ifd(
     let is_tiled = crate::ffi::TIFFIsTiled(tif_src) != 0;
 
     // Set required tags for this IFD (image structure)
-    TIFFSetField(tif_dst, TIFFTAG_IMAGEWIDTH, w);
-    TIFFSetField(tif_dst, TIFFTAG_IMAGELENGTH, h);
+    if TIFFSetField(tif_dst, TIFFTAG_IMAGEWIDTH, w) == 0 {
+        return Err(anyhow!("Failed to set image width"));
+    }
+    if TIFFSetField(tif_dst, TIFFTAG_IMAGELENGTH, h) == 0 {
+        return Err(anyhow!("Failed to set image length"));
+    }
 
     // Preserve original image parameters
-    TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, bps as u32);
-    TIFFSetField(tif_dst, TIFFTAG_SAMPLESPERPIXEL, spp as u32);
-    if fmt != 0 {
-        TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, fmt as u32);
+    if TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, bps as u32) == 0 {
+        return Err(anyhow!("Failed to set bits per sample"));
     }
-    TIFFSetField(tif_dst, TIFFTAG_PHOTOMETRIC, photometric as u32);
+    if TIFFSetField(tif_dst, TIFFTAG_SAMPLESPERPIXEL, spp as u32) == 0 {
+        return Err(anyhow!("Failed to set samples per pixel"));
+    }
+    if fmt != 0 {
+        if TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, fmt as u32) == 0 {
+            return Err(anyhow!("Failed to set sample format"));
+        }
+    }
+    if TIFFSetField(tif_dst, TIFFTAG_PHOTOMETRIC, photometric as u32) == 0 {
+        return Err(anyhow!("Failed to set photometric interpretation"));
+    }
     // Only set PLANARCONFIG if source had it and spp > 1 (multi-sample)
     // For single-sample images, libtiff expects PLANARCONFIG_CONTIG
     if planar != 0 && spp > 1 {
-        TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32);
+        if TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32) == 0 {
+            return Err(anyhow!("Failed to set planar configuration"));
+        }
     }
 
     // For tiled images, preserve the tiled format; otherwise use strips
@@ -739,27 +753,39 @@ unsafe fn process_single_ifd(
         let mut tile_length: u32 = 0;
         TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width);
         TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length);
-        TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h);
+        if TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h) == 0 {
+            return Err(anyhow!("Failed to set rows per strip"));
+        }
     } else {
-        TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h);
+        if TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h) == 0 {
+            return Err(anyhow!("Failed to set rows per strip"));
+        }
     }
 
     // Set compression AFTER image structure but BEFORE metadata copying
     // Cast to i32 as required for variadic FFI functions (libtiff expects uint16_vap which is int)
-    TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as i32);
+    if TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as i32) == 0 {
+        return Err(anyhow!("Failed to set compression codec"));
+    }
 
     // Resolution tags (optional but commonly present)
     let mut xres: f32 = 0.0;
     let mut yres: f32 = 0.0;
     let mut resunit: u16 = 0;
     if TIFFGetField(tif_src, TIFFTAG_XRESOLUTION, &mut xres) != 0 {
-        TIFFSetField(tif_dst, TIFFTAG_XRESOLUTION, xres as f64);
+        if TIFFSetField(tif_dst, TIFFTAG_XRESOLUTION, xres as f64) == 0 {
+            return Err(anyhow!("Failed to set X resolution"));
+        }
     }
     if TIFFGetField(tif_src, TIFFTAG_YRESOLUTION, &mut yres) != 0 {
-        TIFFSetField(tif_dst, TIFFTAG_YRESOLUTION, yres as f64);
+        if TIFFSetField(tif_dst, TIFFTAG_YRESOLUTION, yres as f64) == 0 {
+            return Err(anyhow!("Failed to set Y resolution"));
+        }
     }
     if TIFFGetField(tif_src, TIFFTAG_RESOLUTIONUNIT, &mut resunit) != 0 {
-        TIFFSetField(tif_dst, TIFFTAG_RESOLUTIONUNIT, resunit as u32);
+        if TIFFSetField(tif_dst, TIFFTAG_RESOLUTIONUNIT, resunit as u32) == 0 {
+            return Err(anyhow!("Failed to set resolution unit"));
+        }
     }
 
     // Clone metadata from source to destination (GeoTIFF, ICC, alpha, etc.)
@@ -778,11 +804,15 @@ unsafe fn process_single_ifd(
         match compression {
             COMPRESSION_LZMA => {
                 let clamped: i32 = lvl.clamp(1, 9) as i32;
-                TIFFSetField(tif_dst, TIFFTAG_LZMAPRESET, clamped);
+                if TIFFSetField(tif_dst, TIFFTAG_LZMAPRESET, clamped) == 0 {
+                    return Err(anyhow!("Failed to set LZMA preset"));
+                }
             }
             COMPRESSION_JPEGXL => {
                 let clamped: i32 = lvl.clamp(1, 100) as i32;
-                TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, clamped);
+                if TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, clamped) == 0 {
+                    return Err(anyhow!("Failed to set Deflate level"));
+                }
             }
             _ => {}
         }
@@ -795,7 +825,9 @@ unsafe fn process_single_ifd(
     let final_predictor = PREDICTOR_NONE;
 
     // Set predictor (compression was already set earlier)
-    TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, final_predictor as u32);
+    if TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, final_predictor as u32) == 0 {
+        return Err(anyhow!("Failed to set predictor"));
+    }
 
     // Write image data
     if is_tiled {
@@ -804,7 +836,9 @@ unsafe fn process_single_ifd(
         process_striped_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize)?;
     }
 
-    TIFFWriteDirectory(tif_dst);
+    if TIFFWriteDirectory(tif_dst) == 0 {
+        return Err(anyhow!("Failed to write TIFF directory"));
+    }
     Ok(())
 }
 
