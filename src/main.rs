@@ -753,13 +753,10 @@ unsafe fn process_single_ifd(
         let mut tile_length: u32 = 0;
         TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width);
         TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length);
-        if TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h) == 0 {
-            return Err(anyhow!("Failed to set rows per strip"));
-        }
-    } else {
-        if TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h) == 0 {
-            return Err(anyhow!("Failed to set rows per strip"));
-        }
+    }
+
+    if TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h) == 0 {
+        return Err(anyhow!("Failed to set rows per strip"));
     }
 
     // Set compression AFTER image structure but BEFORE metadata copying
