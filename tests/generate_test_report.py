@@ -10,6 +10,36 @@ import os
 from pathlib import Path
 from datetime import datetime
 
+try:
+    from PIL import Image
+    HAS_PILLOW = True
+except ImportError:
+    HAS_PILLOW = False
+
+def create_thumbnail(tiff_path, png_path, size=128):
+    """Create a small thumbnail from a TIFF file."""
+    if not HAS_PILLOW:
+        return False
+    try:
+        img = Image.open(tiff_path)
+        if img.mode not in ("RGB", "L"):
+            if img.mode == "P":
+                img = img.convert("RGB")
+            elif img.mode == "I":
+                img = img.point(lambda x: x >> 24 if x > 0 else 0).convert("L")
+            elif img.mode == "F":
+                img = img.point(lambda x: int(x * 255)).convert("L")
+            else:
+                img = img.convert("RGB")
+        w, h = img.size
+        if w > size or h > size:
+            scale = size / max(w, h)
+            img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
+        img.save(png_path)
+        return True
+    except Exception:
+        return False
+
 def get_tiffinfo(filepath):
     """Get TIFF metadata using tiffinfo."""
     try:
@@ -109,13 +139,17 @@ def main():
     # Ensure binary is built
     print("Building tiff-reducer...")
     subprocess.run(['cargo', 'build', '--release'], check=True, capture_output=True)
-    
+
     # Get all test images
     test_dir = Path('tests/images')
     images = sorted([f for f in test_dir.glob('*.tif*') if f.is_file()])
-    
+
+    # Create thumbnails directory
+    thumbnails_dir = Path('tests/report/thumbnails')
+    thumbnails_dir.mkdir(parents=True, exist_ok=True)
+
     print(f"Testing {len(images)} images...")
-    
+
     results = {
         'working': [],
         'failed_directory': [],
@@ -123,19 +157,38 @@ def main():
         'failed_tile': [],
         'failed_other': [],
     }
-    
+
     for i, image_path in enumerate(images):
         print(f"[{i+1}/{len(images)}] Testing {image_path.name}...", end=' ')
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / 'output.tif'
             success, error = test_compression(image_path, output_path)
-            
+
+            # Generate thumbnails
+            thumb_orig = None
+            thumb_comp = None
+            if success:
+                thumb_orig_name = f"{image_path.stem}_orig.png"
+                thumb_comp_name = f"{image_path.stem}_comp.png"
+                thumb_orig_path = thumbnails_dir / thumb_orig_name
+                thumb_comp_path = thumbnails_dir / thumb_comp_name
+                
+                if create_thumbnail(image_path, thumb_orig_path):
+                    thumb_orig = f"thumbnails/{thumb_orig_name}"
+                if create_thumbnail(output_path, thumb_comp_path):
+                    thumb_comp = f"thumbnails/{thumb_comp_name}"
+
             if success:
                 results['working'].append({
                     'name': image_path.name,
+                    'stem': image_path.stem,
                     'path': str(image_path),
-                    'error': None
+                    'error': None,
+                    'thumb_orig': thumb_orig,
+                    'thumb_comp': thumb_comp,
+                    'orig_size': image_path.stat().st_size,
+                    'comp_size': output_path.stat().st_size if output_path.exists() else 0,
                 })
                 print('✅')
             else:
@@ -144,7 +197,7 @@ def main():
                     'path': str(image_path),
                     'error': error
                 }
-                
+
                 if 'TIFFWriteDirectorySec' in error:
                     results['failed_directory'].append(entry)
                 elif 'Read error' in error or 'Tile decode error' in error:
@@ -153,168 +206,89 @@ def main():
                     results['failed_tile'].append(entry)
                 else:
                     results['failed_other'].append(entry)
-                
-                print(f'❌ ({error})')
-    
-    # Generate report
-    generate_report(results, images)
 
-def generate_report(results, all_images):
-    """Generate markdown report."""
-    
+                print(f'❌ ({error})')
+
+    # Generate report
+    generate_report(results, images, thumbnails_dir)
+
+def generate_report(results, all_images, thumbnails_dir):
+    """Generate Markdown README report with thumbnails."""
+
+    total = len(all_images)
+    working = len(results['working'])
+    failed = total - working
+
     report = []
     report.append("# tiff-reducer Test Report")
     report.append("")
     report.append(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     report.append("")
-    
+
     # Summary
-    total = len(all_images)
-    working = len(results['working'])
-    failed = total - working
-    
     report.append("## Summary")
     report.append("")
-    report.append(f"| Category | Count | Percentage |")
-    report.append(f"|----------|-------|------------|")
+    report.append("| Category | Count | Percentage |")
+    report.append("|----------|-------|------------|")
     report.append(f"| ✅ Working | {working} | {working/total*100:.1f}% |")
     report.append(f"| ❌ Failed | {failed} | {failed/total*100:.1f}% |")
     report.append(f"| **Total** | **{total}** | **100%** |")
     report.append("")
-    
+
     # Failure breakdown
     report.append("### Failure Breakdown")
     report.append("")
-    report.append(f"| Failure Type | Count |")
-    report.append(f"|--------------|-------|")
+    report.append("| Failure Type | Count |")
+    report.append("|--------------|-------|")
     report.append(f"| TIFFWriteDirectorySec crash | {len(results['failed_directory'])} |")
     report.append(f"| Read/Decode errors | {len(results['failed_read'])} |")
     report.append(f"| Tile errors | {len(results['failed_tile'])} |")
     report.append(f"| Other errors | {len(results['failed_other'])} |")
     report.append("")
-    
-    # Working images
+
+    # Working images with thumbnails
     report.append("## ✅ Working Images")
     report.append("")
-    if results['working']:
-        report.append("<details>")
-        report.append(f"<summary>{len(results['working'])} working images</summary>")
+    report.append(f"**{working} images** successfully compressed with thumbnails below:")
+    report.append("")
+
+    # Group images for grid display (4 per row)
+    working_imgs = results['working']
+    for i in range(0, len(working_imgs), 4):
+        row = working_imgs[i:i+4]
+        report.append("| " + " | ".join([
+            f"**{img['name']}**<br>" +
+            (f"![Compressed](report/thumbnails/{img['stem']}_comp.png)<br>_{img['orig_size']:,} → {img['comp_size']:,} bytes_<br>_⬇ {(1 - img['comp_size']/img['orig_size'])*100:.1f}%_" if img['thumb_comp'] else "No thumbnail")
+            for img in row
+        ]) + " |")
+        report.append("|:-:|" * len(row))
         report.append("")
-        for img in results['working']:
-            report.append(f"- `{img['name']}`")
+
+    # Failed images
+    all_failed = (results['failed_directory'] + results['failed_read'] + 
+                  results['failed_tile'] + results['failed_other'])
+
+    report.append("## ❌ Failed Images")
+    report.append("")
+    if all_failed:
+        report.append(f"**{len(all_failed)} images** failed to process:")
         report.append("")
-        report.append("</details>")
+        report.append("| File | Error |")
+        report.append("|------|-------|")
+        for img in all_failed:
+            report.append(f"| `{img['name']}` | {img['error'] or 'Unknown'} |")
     else:
-        report.append("*No working images*")
+        report.append("*No failures!*")
     report.append("")
-    
-    # Failed - TIFFWriteDirectorySec
-    report.append("## ❌ TIFFWriteDirectorySec Crashes")
-    report.append("")
-    report.append("**Cause:** libtiff 4.5.1 crashes when writing directory with certain tag combinations.")
-    report.append("")
-    if results['failed_directory']:
-        report.append("<details>")
-        report.append(f"<summary>{len(results['failed_directory'])} images with directory crashes</summary>")
-        report.append("")
-        for img in results['failed_directory']:
-            report.append(f"- `{img['name']}`")
-        report.append("")
-        report.append("</details>")
-    else:
-        report.append("*None*")
-    report.append("")
-    
-    # Failed - Read errors
-    report.append("## ❌ Read/Decode Errors")
-    report.append("")
-    report.append("**Cause:** Unable to read source file format or decode compressed tiles.")
-    report.append("")
-    if results['failed_read']:
-        report.append("<details>")
-        report.append(f"<summary>{len(results['failed_read'])} images with read errors</summary>")
-        report.append("")
-        for img in results['failed_read']:
-            report.append(f"- `{img['name']}` - {img['error']}")
-        report.append("")
-        report.append("</details>")
-    else:
-        report.append("*None*")
-    report.append("")
-    
-    # Failed - Tile errors
-    report.append("## ❌ Tile Processing Errors")
-    report.append("")
-    report.append("**Cause:** Issues with tiled image processing.")
-    report.append("")
-    if results['failed_tile']:
-        report.append("<details>")
-        report.append(f"<summary>{len(results['failed_tile'])} images with tile errors</summary>")
-        report.append("")
-        for img in results['failed_tile']:
-            report.append(f"- `{img['name']}` - {img['error']}")
-        report.append("")
-        report.append("</details>")
-    else:
-        report.append("*None*")
-    report.append("")
-    
-    # Failed - Other
-    report.append("## ❌ Other Errors")
-    report.append("")
-    if results['failed_other']:
-        report.append("<details>")
-        report.append(f"<summary>{len(results['failed_other'])} images with other errors</summary>")
-        report.append("")
-        for img in results['failed_other']:
-            report.append(f"- `{img['name']}` - {img['error']}")
-        report.append("")
-        report.append("</details>")
-    else:
-        report.append("*None*")
-    report.append("")
-    
-    # Known limitations
-    report.append("## Known Limitations")
-    report.append("")
-    report.append("### Multi-page OME-TIFF Files")
-    report.append("")
-    report.append("Multi-page OME-TIFF files (microscopy data) crash during directory writing.")
-    report.append("This appears to be a libtiff 4.5.1 limitation with complex metadata structures.")
-    report.append("")
-    report.append("### Tiled Images with Specific Metadata")
-    report.append("")
-    report.append("Some LZW-compressed tiled images with Page Number tags or XMP metadata crash.")
-    report.append("Standard tiled images without complex metadata work correctly.")
-    report.append("")
-    report.append("### Compression Level Tags")
-    report.append("")
-    report.append("- DEFLATELEVEL tag causes crashes - currently disabled")
-    report.append("- ZSTD level tag (65564) not supported in libtiff 4.5.1")
-    report.append("- LZMA preset level works correctly")
-    report.append("")
-    report.append("### Predictor")
-    report.append("")
-    report.append("Horizontal predictor causes crashes with ZSTD/Deflate compression.")
-    report.append("Currently disabled by default for stability.")
-    report.append("")
-    
-    # Recommendations
-    report.append("## Recommendations")
-    report.append("")
-    report.append("1. **For multi-page files:** Process pages individually if possible")
-    report.append("2. **For tiled files:** Most work correctly; failures are metadata-specific")
-    report.append("3. **For best compression:** Use ZSTD (default) with level 19")
-    report.append("4. **For compatibility:** Use Deflate compression")
-    report.append("")
-    
+
     # Write report
     report_path = Path('tests/README.md')
     with open(report_path, 'w') as f:
         f.write('\n'.join(report))
 
     print(f"\nReport written to {report_path}")
-    
+    print(f"Thumbnails stored in {thumbnails_dir}/")
+
     # Also print summary
     print(f"\n{'='*60}")
     print(f"SUMMARY")
