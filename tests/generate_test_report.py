@@ -252,17 +252,24 @@ def generate_report(results, all_images, thumbnails_dir):
     report.append(f"**{working} images** successfully compressed with thumbnails below:")
     report.append("")
 
-    # Group images for grid display (4 per row)
+    # Display as a simple vertical list (more readable than table)
     working_imgs = results['working']
-    for i in range(0, len(working_imgs), 4):
-        row = working_imgs[i:i+4]
-        report.append("| " + " | ".join([
-            f"**{img['name']}**<br>" +
-            (f"![Compressed](report/thumbnails/{img['stem']}_comp.png)<br>_{img['orig_size']:,} → {img['comp_size']:,} bytes_<br>_⬇ {(1 - img['comp_size']/img['orig_size'])*100:.1f}%_" if img['thumb_comp'] else "No thumbnail")
-            for img in row
-        ]) + " |")
-        report.append("|:-:|" * len(row))
-        report.append("")
+    for img in working_imgs:
+        if img['thumb_comp']:
+            reduction = (1 - img['comp_size']/img['orig_size'])*100
+            report.append(f"### {img['name']}")
+            report.append("")
+            report.append(f"![Compressed](report/thumbnails/{img['stem']}_comp.png)")
+            report.append("")
+            report.append(f"- **Original size:** {img['orig_size']:,} bytes")
+            report.append(f"- **Compressed size:** {img['comp_size']:,} bytes")
+            report.append(f"- **Reduction:** ⬇ {reduction:.1f}%")
+            report.append("")
+        else:
+            report.append(f"### {img['name']}")
+            report.append("")
+            report.append("*No thumbnail available*")
+            report.append("")
 
     # Failed images
     all_failed = (results['failed_directory'] + results['failed_read'] + 
