@@ -18,19 +18,19 @@ static GEOASCII_NAME: &[u8] = b"GeoAsciiParamsTag\0";
 /// registered with libtiff via register_geotiff_tags().
 pub unsafe fn clone_metadata(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     // Resolution and units
-    copy_tag_float(src, dst, TIFFTAG_XRESOLUTION);
-    copy_tag_float(src, dst, TIFFTAG_YRESOLUTION);
-    copy_tag_u16(src, dst, TIFFTAG_RESOLUTIONUNIT);
+    copy_tag_float(src, dst, TIFFTAG_XRESOLUTION)?;
+    copy_tag_float(src, dst, TIFFTAG_YRESOLUTION)?;
+    copy_tag_u16(src, dst, TIFFTAG_RESOLUTIONUNIT)?;
 
     // Specialized metadata components
     copy_extrasamples(src, dst)?;
     copy_colormap(src, dst)?;
-    copy_geotiff_tags(src, dst);
-    copy_gdal_tags(src, dst);
+    copy_geotiff_tags(src, dst)?;
+    copy_gdal_tags(src, dst)?;
     copy_icc_profile(src, dst)?;
     copy_ycbcr_tags(src, dst)?;
-    copy_cmyk_tags(src, dst);
-    copy_image_description(src, dst);
+    copy_cmyk_tags(src, dst)?;
+    copy_image_description(src, dst)?;
     Ok(())
 }
 
@@ -172,52 +172,65 @@ pub unsafe fn copy_ycbcr_tags_early(src: *mut TIFF, dst: *mut TIFF) -> Result<()
 }
 
 /// Copy CMYK/Ink-related tags
-pub unsafe fn copy_cmyk_tags(src: *mut TIFF, dst: *mut TIFF) {
+pub unsafe fn copy_cmyk_tags(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     // InkSet (single SHORT value)
     let mut inkset: u16 = 0;
     if TIFFGetField(src, TIFFTAG_INKSET, &mut inkset) != 0 {
-        TIFFSetField(dst, TIFFTAG_INKSET, inkset as u32);
+        if TIFFSetField(dst, TIFFTAG_INKSET, inkset as u32) == 0 {
+            return Err(anyhow!("Failed to set InkSet tag"));
+        }
     }
 
     // DotRange (two SHORT values: 0-65535 representing 0.0-100.0%)
     let mut dot0: u16 = 0;
     let mut dot1: u16 = 0;
     if TIFFGetField(src, TIFFTAG_DOTRANGE, &mut dot0, &mut dot1) != 0 {
-        TIFFSetField(dst, TIFFTAG_DOTRANGE, dot0 as u32, dot1 as u32);
+        if TIFFSetField(dst, TIFFTAG_DOTRANGE, dot0 as u32, dot1 as u32) == 0 {
+            return Err(anyhow!("Failed to set DotRange tag"));
+        }
     }
 
     // NumberOfInks (single LONG value)
     let mut num_inks: u32 = 0;
     if TIFFGetField(src, TIFFTAG_NUMBEROFINKS, &mut num_inks) != 0 {
-        TIFFSetField(dst, TIFFTAG_NUMBEROFINKS, num_inks);
+        if TIFFSetField(dst, TIFFTAG_NUMBEROFINKS, num_inks) == 0 {
+            return Err(anyhow!("Failed to set NumberOfInks tag"));
+        }
     }
 
     // InkNames (ASCII string)
     let mut ink_names: *mut c_char = std::ptr::null_mut();
     if TIFFGetField(src, TIFFTAG_INKNAMES, &mut ink_names) != 0 {
         if !ink_names.is_null() {
-            TIFFSetField(dst, TIFFTAG_INKNAMES, ink_names);
+            if TIFFSetField(dst, TIFFTAG_INKNAMES, ink_names) == 0 {
+                return Err(anyhow!("Failed to set InkNames tag"));
+            }
         }
     }
+    Ok(())
 }
 
 /// Copy ImageDescription tag (used for OME-XML metadata)
-pub unsafe fn copy_image_description(src: *mut TIFF, dst: *mut TIFF) {
+pub unsafe fn copy_image_description(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     let mut desc: *mut c_char = std::ptr::null_mut();
     if TIFFGetField(src, TIFFTAG_IMAGEDESCRIPTION, &mut desc) != 0 {
         if !desc.is_null() {
-            TIFFSetField(dst, TIFFTAG_IMAGEDESCRIPTION, desc);
+            if TIFFSetField(dst, TIFFTAG_IMAGEDESCRIPTION, desc) == 0 {
+                return Err(anyhow!("Failed to set ImageDescription tag"));
+            }
         }
     }
+    Ok(())
 }
 
 /// Copy GDAL metadata tags (NoDataValue and XML metadata)
 /// These tags require manual registration with libtiff
 /// For now, skip copying as the registration is causing issues
 /// TODO: Fix GDAL tag registration with proper libtiff field info structure
-pub unsafe fn copy_gdal_tags(_src: *mut TIFF, _dst: *mut TIFF) {
+pub unsafe fn copy_gdal_tags(_src: *mut TIFF, _dst: *mut TIFF) -> Result<()> {
     // GDAL tags are not supported yet - requires proper libtiff field info structure
     // The NoDataValue will be lost, but pixel data is preserved
+    Ok(())
 }
 
 /// Registers GeoTIFF tags for reading/writing with libtiff
@@ -236,7 +249,7 @@ pub unsafe fn register_geotiff_tags_ffi(tif: *mut TIFF) {
 
 /// Copy GeoTIFF tags using the registered tag definitions
 /// Requires that register_geotiff_tags() was called on both src and dst TIFF handles
-unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF) {
+unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     // Copy ModelPixelScaleTag (array of 3 doubles)
     let mut pixel_scale: *mut f64 = std::ptr::null_mut();
     let mut count: u32 = 0;
@@ -248,7 +261,9 @@ unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF) {
     ) != 0
     {
         if !pixel_scale.is_null() && count > 0 && count < 1000 {
-            let _ = crate::ffi::TIFFSetField(dst, TIFFTAG_MODELPIXELSCALETAG, count, pixel_scale);
+            if crate::ffi::TIFFSetField(dst, TIFFTAG_MODELPIXELSCALETAG, count, pixel_scale) == 0 {
+                return Err(anyhow!("Failed to set ModelPixelScaleTag"));
+            }
         }
     }
 
@@ -257,7 +272,9 @@ unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF) {
     count = 0;
     if TIFFGetField(src, TIFFTAG_MODELTIEPOINTTAG, &mut count, &mut tiepoints) != 0 {
         if !tiepoints.is_null() && count > 0 && count < 1000 {
-            let _ = crate::ffi::TIFFSetField(dst, TIFFTAG_MODELTIEPOINTTAG, count, tiepoints);
+            if crate::ffi::TIFFSetField(dst, TIFFTAG_MODELTIEPOINTTAG, count, tiepoints) == 0 {
+                return Err(anyhow!("Failed to set ModelTiepointTag"));
+            }
         }
     }
 
@@ -266,7 +283,9 @@ unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF) {
     count = 0;
     if TIFFGetField(src, TIFFTAG_GEOKEYDIRECTORYTAG, &mut count, &mut geo_keys) != 0 {
         if !geo_keys.is_null() && count > 0 && count < 10000 {
-            let _ = crate::ffi::TIFFSetField(dst, TIFFTAG_GEOKEYDIRECTORYTAG, count, geo_keys);
+            if crate::ffi::TIFFSetField(dst, TIFFTAG_GEOKEYDIRECTORYTAG, count, geo_keys) == 0 {
+                return Err(anyhow!("Failed to set GeoKeyDirectoryTag"));
+            }
         }
     }
 
@@ -281,7 +300,9 @@ unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF) {
     ) != 0
     {
         if !geo_doubles.is_null() && count > 0 && count < 1000 {
-            let _ = crate::ffi::TIFFSetField(dst, TIFFTAG_GEODOUBLEPARAMSTAG, count, geo_doubles);
+            if crate::ffi::TIFFSetField(dst, TIFFTAG_GEODOUBLEPARAMSTAG, count, geo_doubles) == 0 {
+                return Err(anyhow!("Failed to set GeoDoubleParamsTag"));
+            }
         }
     }
 
@@ -289,28 +310,40 @@ unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF) {
     let mut geo_ascii: *mut c_char = std::ptr::null_mut();
     if TIFFGetField(src, TIFFTAG_GEOASCIIPARAMSTAG, &mut geo_ascii) != 0 {
         if !geo_ascii.is_null() {
-            let _ = crate::ffi::TIFFSetField(dst, TIFFTAG_GEOASCIIPARAMSTAG, geo_ascii);
+            if crate::ffi::TIFFSetField(dst, TIFFTAG_GEOASCIIPARAMSTAG, geo_ascii) == 0 {
+                return Err(anyhow!("Failed to set GeoAsciiParamsTag"));
+            }
         }
     }
+    Ok(())
 }
 
-unsafe fn copy_tag_u32(src: *mut TIFF, dst: *mut TIFF, tag: u32) {
+unsafe fn copy_tag_u32(src: *mut TIFF, dst: *mut TIFF, tag: u32) -> Result<()> {
     let mut val: u32 = 0;
     if TIFFGetField(src, tag, &mut val) != 0 {
-        TIFFSetField(dst, tag, val);
+        if TIFFSetField(dst, tag, val) == 0 {
+            return Err(anyhow!("Failed to set u32 tag {}", tag));
+        }
     }
+    Ok(())
 }
 
-unsafe fn copy_tag_u16(src: *mut TIFF, dst: *mut TIFF, tag: u32) {
+unsafe fn copy_tag_u16(src: *mut TIFF, dst: *mut TIFF, tag: u32) -> Result<()> {
     let mut val: u16 = 0;
     if TIFFGetField(src, tag, &mut val) != 0 {
-        TIFFSetField(dst, tag, val as u32);
+        if TIFFSetField(dst, tag, val as u32) == 0 {
+            return Err(anyhow!("Failed to set u16 tag {}", tag));
+        }
     }
+    Ok(())
 }
 
-unsafe fn copy_tag_float(src: *mut TIFF, dst: *mut TIFF, tag: u32) {
+unsafe fn copy_tag_float(src: *mut TIFF, dst: *mut TIFF, tag: u32) -> Result<()> {
     let mut val: f32 = 0.0;
     if TIFFGetField(src, tag, &mut val) != 0 {
-        TIFFSetField(dst, tag, val as f64);
+        if TIFFSetField(dst, tag, val as f64) == 0 {
+            return Err(anyhow!("Failed to set float tag {}", tag));
+        }
     }
+    Ok(())
 }
