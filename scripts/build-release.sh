@@ -11,7 +11,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-OUTPUT_DIR="$PROJECT_DIR/target/release"
+
+# Detect target directory from cargo metadata or use default
+TARGET_DIR=$(cargo metadata --format-version 1 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('target_directory'))" 2>/dev/null || echo "$PROJECT_DIR/target")
+OUTPUT_DIR="$TARGET_DIR/release"
 BINARY_NAME="tiff-reducer"
 BINARY_PATH="$OUTPUT_DIR/$BINARY_NAME"
 
