@@ -84,44 +84,29 @@ tiff-reducer compress ./input_folder --output ./output_folder --extreme
 
 ## Installation
 
-### From Source (Dynamic Linking)
-Requires `libtiff`, `libzstd`, `liblzma`, and `libjpeg` development headers.
+### From Source (Vendored - Default)
 
-**Debian/Ubuntu:**
+Builds libtiff and all compression libraries from source using git. Produces a binary with minimal external dependencies.
+
+**Prerequisites:**
 ```bash
-sudo apt-get install -y libtiff-dev libzstd-dev liblzma-dev libjpeg-dev libwebp-dev libdeflate-dev
-cargo build --release
-```
-
-**Arch Linux:**
-```bash
-sudo pacman -S libtiff zstd xz libjpeg-turbo libwebp libdeflate
-cargo build --release
-```
-
-### Static Binary (via Docker - Recommended for portability)
-Produces a musl-linked binary for any Linux environment.
-
-```bash
-docker build -t tiff-reducer-builder .
-# Extract the binary
-docker create --name temp-tiff-reducer tiff-reducer-builder
-docker cp temp-tiff-reducer:/tiff-reducer ./tiff-reducer
-docker rm temp-tiff-reducer
-```
-
-### Vendored Build (Statically linked compression libraries)
-Builds all compression libraries from source. Only glibc remains dynamic.
-
-```bash
-# No system dependencies needed (except build tools)
+# Debian/Ubuntu
 sudo apt-get install -y cmake git
 
-# Build with all libraries compiled from source
+# Arch Linux
+sudo pacman -S cmake git
+```
+
+**Build:**
+```bash
+# Default vendored build (all compression libraries static)
+cargo build --release
+
+# Or explicitly specify vendored feature
 cargo build --release --features vendored
 ```
 
-**What's static vs dynamic:**
+**What's static vs dynamic (vendored build):**
 
 | Library | Status |
 |---------|--------|
@@ -135,7 +120,37 @@ cargo build --release --features vendored
 
 **Result:** The binary only depends on glibc (`libc.so.6`, `libm.so.6`, `libgcc_s.so.1`). All compression libraries are statically linked.
 
-For a **fully static binary** (no glibc dependency), use the Docker build or compile with `--target x86_64-unknown-linux-musl` (requires musl toolchain).
+### System Libraries (Alternative)
+
+Use system-installed libtiff and dependencies. Requires development headers.
+
+**Prerequisites:**
+```bash
+# Debian/Ubuntu
+sudo apt-get install -y libtiff-dev libzstd-dev liblzma-dev libjpeg-dev libwebp-dev libdeflate-dev
+
+# Arch Linux
+sudo pacman -S libtiff zstd xz libjpeg-turbo libwebp libdeflate
+```
+
+**Build:**
+```bash
+cargo build --release --features system
+```
+
+### Fully Static Binary (via Docker)
+
+Produces a musl-linked binary for any Linux environment with no glibc dependency.
+
+```bash
+docker build -t tiff-reducer-builder .
+# Extract the binary
+docker create --name temp-tiff-reducer tiff-reducer-builder
+docker cp temp-tiff-reducer:/tiff-reducer ./tiff-reducer
+docker rm temp-tiff-reducer
+```
+
+For a **fully static binary** without Docker, use `--target x86_64-unknown-linux-musl` (requires musl toolchain).
 
 ### Development Build (with Test Images)
 
