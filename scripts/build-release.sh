@@ -4,8 +4,9 @@
 # Usage:
 #   ./scripts/build-release.sh              # Build with vendored features
 #   ./scripts/build-release.sh --upx        # Build and compress with UPX
-#   ./scripts/build-release.sh --static     # Build fully static via Docker
+#   ./scripts/build-release.sh --static     # Build fully static via Docker (Linux only)
 #   ./scripts/build-release.sh --static --upx  # Build static and compress
+#   ./scripts/build-release.sh --musl       # Build with musl target (fully static)
 
 set -e
 
@@ -14,12 +15,25 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Detect target directory from cargo metadata or use default
 TARGET_DIR=$(cargo metadata --format-version 1 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('target_directory'))" 2>/dev/null || echo "$PROJECT_DIR/target")
-OUTPUT_DIR="$TARGET_DIR/release"
-BINARY_NAME="tiff-reducer"
-BINARY_PATH="$OUTPUT_DIR/$BINARY_NAME"
 
 USE_UPX=false
 USE_STATIC=false
+USE_MUSL=false
+
+# Determine target triple
+TARGET_TRIPLE=""
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    TARGET_TRIPLE="x86_64-unknown-linux-musl"
+    OUTPUT_DIR="$TARGET_DIR/$TARGET_TRIPLE/release"
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    TARGET_TRIPLE="x86_64-apple-darwin"
+    OUTPUT_DIR="$TARGET_DIR/$TARGET_TRIPLE/release"
+else
+    OUTPUT_DIR="$TARGET_DIR/release"
+fi
+
+BINARY_NAME="tiff-reducer"
+BINARY_PATH="$OUTPUT_DIR/$BINARY_NAME"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -32,12 +46,17 @@ while [[ $# -gt 0 ]]; do
             USE_STATIC=true
             shift
             ;;
+        --musl)
+            USE_MUSL=true
+            shift
+            ;;
         --help)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --upx      Compress binary with UPX after building"
-            echo "  --static   Build fully static binary via Docker"
+            echo "  --static   Build fully static binary via Docker (Linux only)"
+            echo "  --musl     Build with musl target for fully static binary"
             echo "  --help     Show this help message"
             exit 0
             ;;
@@ -65,8 +84,15 @@ check_upx() {
 build_vendored() {
     echo "Building with vendored features..."
     cd "$PROJECT_DIR"
-    cargo build --release --features vendored
     
+    if [ "$USE_MUSL" = true ]; then
+        echo "Target: $TARGET_TRIPLE (musl - fully static)"
+        cargo build --release --features vendored --target "$TARGET_TRIPLE"
+    else
+        echo "Target: native"
+        cargo build --release --features vendored
+    fi
+
     if [ -f "$BINARY_PATH" ]; then
         local size_before=$(stat -c%s "$BINARY_PATH" 2>/dev/null || stat -f%z "$BINARY_PATH" 2>/dev/null)
         echo "Build successful: $BINARY_PATH ($(numfmt --to=iec-i --suffix=B $size_before 2>/dev/null || echo "${size_before} bytes"))"
@@ -122,6 +148,8 @@ compress_upx() {
 # Main build process
 if [ "$USE_STATIC" = true ]; then
     build_static
+elif [ "$USE_MUSL" = true ]; then
+    build_vendored
 else
     build_vendored
 fi
