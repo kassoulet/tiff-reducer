@@ -4,11 +4,12 @@ A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency
 
 ## Features
 
+> One single executable, no dependencies, no configuration files. No need to install any additional software. No need to configure anything. 
+
 ### Compression
 - **Multiple Codecs**: Zstd, LZMA, Deflate, LZW, JPEG, WebP, LERC (with variants)
 - **Compression Levels**: Zstd (1-22), Deflate/LZMA (1-9), JPEG/WebP (1-100)
 - **Predictors**: None, Horizontal, Floating Point (for float32 data)
-- **SIMD Optimizations**: SSE4.2/AVX2 (x86_64) or NEON (ARM64) for ~12% speedup
 - **Extreme Mode**: Benchmarks all formats to find the smallest file size
 
 ### Metadata Preservation
@@ -32,14 +33,6 @@ A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency
 - **Fuzz Testing**: 18 malformed file scenarios for error handling
 - **Benchmark Mode**: `--benchmark` flag for timing/throughput metrics
 - **Dry-run Mode**: `--dry-run` flag for benchmarking without writing
-
-### Security
-- **Security Audit**: Comprehensive audit completed March 2026 (18 issues identified)
-- **FFI Safety**: Null pointer checks, buffer validation, return value checking
-- **Input Validation**: Bounds checking, integer overflow protection, path sanitization
-- **Memory Safety**: Proper resource cleanup, no use-after-free, safe abstractions
-
-See [SECURITY.md](SECURITY.md) for detailed audit findings and remediation status.
 
 ## Usage
 
@@ -88,39 +81,6 @@ tiff-reducer analyze image.tif
 ```bash
 tiff-reducer compress ./input_folder --output ./output_folder --extreme
 ```
-
-## Test Results
-
-### Integration Tests (v0.3.0)
-- **Total**: 6 passed, 0 failed
-- **Categories**:
-  - Compression format tests (Zstd, Deflate, LZW)
-  - Metadata preservation (GeoTIFF, ICC profiles, alpha channels)
-  - Multi-page TIFF handling
-  - Error handling (corrupt files, nonexistent files)
-  - Benchmark output validation
-
-### Image Compression (v0.3.0)
-- **Success rate**: ~96% (292/304 images)
-- **Working**: Standard bit depths (8/16/32), single-page, strip/tiled images, YCbCr color space
-- **Known issues**: 
-  - OJPEG compression (legacy format with limited libtiff support)
-  - THUNDERSCAN compression (obsolete format)
-  - YCbCr with subsampling (causes crash in TIFFWriteDirectory)
-  - JPEG-compressed TIFF (some files cause crashes)
-
-### Security Audit (March 2026)
-- **Total Issues**: 18 identified
-- **Critical**: 2 (path traversal, unchecked FFI return values)
-- **High**: 8 (buffer overflow, null pointer, integer overflow, etc.)
-- **Medium**: 6 (error handling, documentation, DoS vectors)
-- **Low**: 2 (cosmetic, minor validation)
-- **Status**: Remediation in progress - see [SECURITY.md](SECURITY.md)
-
-### Legacy Tests (v0.2.0)
-- **Metadata tests**: 27 passed, 0 failed, 29 skipped (56 files)
-- **Visual tests**: 6/6 passed (lossless pixel-perfect compression)
-- **Fuzz tests**: 16/18 passed (graceful error handling)
 
 ## Installation
 
