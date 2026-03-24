@@ -140,14 +140,20 @@ cargo build --release --features system
 
 ### Fully Static Binary (via Docker)
 
-Produces a musl-linked binary for any Linux environment with no glibc dependency.
+Produces a musl-linked binary with all libraries statically linked (no glibc dependency).
 
 ```bash
-docker build -t tiff-reducer-builder .
+docker build -f Dockerfile.static -t tiff-reducer-builder .
 # Extract the binary
 docker create --name temp-tiff-reducer tiff-reducer-builder
 docker cp temp-tiff-reducer:/tiff-reducer ./tiff-reducer
 docker rm temp-tiff-reducer
+```
+
+**Verify static linking:**
+```bash
+ldd ./tiff-reducer
+# Should show: "not a dynamic executable"
 ```
 
 For a **fully static binary** without Docker, use `--target x86_64-unknown-linux-musl` (requires musl toolchain).

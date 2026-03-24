@@ -1,0 +1,26 @@
+# Builder stage - Use musl for fully static binary
+FROM rust:alpine as builder
+
+# Install build dependencies
+RUN apk add --no-cache \
+    cmake \
+    make \
+    g++ \
+    git \
+    musl-dev \
+    musl-fts-dev \
+    musl-libintl \
+    linux-headers \
+    perl \
+    py3-pyelftools
+
+WORKDIR /usr/src/tiff-reducer
+COPY . .
+
+# Build with vendored feature for static linking
+RUN cargo build --release --features vendored --target x86_64-unknown-linux-musl
+
+# Final stage - minimal image
+FROM scratch
+COPY --from=builder /usr/src/tiff-reducer/target/x86_64-unknown-linux-musl/release/tiff-reducer /tiff-reducer
+ENTRYPOINT ["/tiff-reducer"]

@@ -1,2 +1,8 @@
 /target
 bin/
+.qwen/
+QWEN.md
+index.html
+prompt.md
+test-results.txt
+tests/report/
