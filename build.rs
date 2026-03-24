@@ -1,3 +1,19 @@
+//! Build script for tiff-reducer
+//!
+//! # Features
+//! - **vendored** (default): Builds libtiff and all dependencies from source using git submodules.
+//!   Produces a fully static binary with no external dependencies.
+//! - **system**: Uses system-installed libtiff and libgeotiff via pkg-config.
+//!   Produces a dynamically linked binary.
+//!
+//! # Vendored Dependencies (from git)
+//! - zlib (v1.3.1)
+//! - libjpeg-turbo (3.1.0)
+//! - libdeflate (v1.22)
+//! - libzstd (v1.5.6)
+//! - liblzma/xz (v5.6.3)
+//! - libtiff (v4.7.1)
+
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -5,14 +21,20 @@ use std::process::Command;
 fn main() {
     let target = env::var("TARGET").unwrap_or_default();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let is_vendored = cfg!(feature = "vendored");
+    // Vendored is now the default; system feature opts out
+    let is_vendored = !cfg!(feature = "system");
 
-    // For vendored builds, compile everything from source
-    if is_vendored {
-        build_fully_static(&out_dir, &target);
+    // Try system libraries first if system feature is enabled
+    if !is_vendored {
+        build_system(&target);
         return;
     }
 
+    // Default: vendored static build from git sources
+    build_fully_static(&out_dir, &target);
+}
+
+fn build_system(_target: &str) {
     // Try pkg-config first (system libraries)
     let mut config = pkg_config::Config::new();
     config.atleast_version("4.0");
