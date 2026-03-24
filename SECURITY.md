@@ -63,10 +63,10 @@ A comprehensive security audit was performed on 2026-03-22, identifying 18 secur
 
 | Severity | Count | Status |
 |----------|-------|--------|
-| Critical | 2 | ⚠️ Identified |
-| High | 8 | ⚠️ Identified |
-| Medium | 6 | ⚠️ Identified |
-| Low | 2 | ⚠️ Identified |
+| Critical | 2 | ✅ Fixed |
+| High | 8 | ✅ Fixed |
+| Medium | 6 | ✅ Fixed |
+| Low | 2 | ✅ Fixed |
 
 ### Critical Findings
 
@@ -74,9 +74,9 @@ A comprehensive security audit was performed on 2026-03-22, identifying 18 secur
 
 **Issue:** The return value of `TIFFSetField` is ignored in `copy_colormap()`. If the set operation fails, the destination TIFF may be left in an inconsistent state.
 
-**Status:** ⚠️ **Requires Fix**
+**Status:** ✅ **Fixed**
 
-**Recommended Fix:**
+**Fix Applied:**
 ```rust
 if TIFFSetField(dst, TIFFTAG_COLORMAP, rmap, gmap, bmap) == 0 {
     return Err(anyhow!("Failed to set colormap"));
@@ -87,9 +87,9 @@ if TIFFSetField(dst, TIFFTAG_COLORMAP, rmap, gmap, bmap) == 0 {
 
 **Issue:** User-controlled file names are directly joined with output paths without sanitization. An attacker could craft a file name like `../../../etc/passwd` to write outside the intended directory.
 
-**Status:** ⚠️ **Requires Fix**
+**Status:** ✅ **Fixed**
 
-**Recommended Fix:**
+**Fix Applied:**
 ```rust
 fn sanitize_filename(name: &std::ffi::OsStr) -> Option<String> {
     let path = Path::new(name);
@@ -106,59 +106,61 @@ fn sanitize_filename(name: &std::ffi::OsStr) -> Option<String> {
 
 | # | Issue | File | Status |
 |---|-------|------|--------|
-| 3 | Buffer overflow via unvalidated scanline size | main.rs:693-701 | ⚠️ Requires Fix |
-| 4 | Null pointer dereference in analyze_file | main.rs:183-203 | ⚠️ Requires Fix |
-| 5 | Use-after-free risk in metadata copying | metadata.rs:56-65 | ⚠️ Requires Fix |
-| 6 | Integer overflow in tiled image processing | main.rs:800-805 | ⚠️ Requires Fix |
-| 7 | Missing bounds check in tile processing | main.rs:827-832 | ⚠️ Requires Fix |
-| 8 | Unvalidated compression level input | main.rs:637-646 | ⚠️ Requires Fix |
+| 3 | Buffer overflow via unvalidated scanline size | main.rs:693-701 | ✅ Fixed |
+| 4 | Null pointer dereference in analyze_file | main.rs:183-203 | ✅ Fixed |
+| 5 | Use-after-free risk in metadata copying | metadata.rs:56-65 | ✅ Fixed |
+| 6 | Integer overflow in tiled image processing | main.rs:800-805 | ✅ Fixed |
+| 7 | Missing bounds check in tile processing | main.rs:827-832 | ✅ Fixed |
+| 8 | Unvalidated compression level input | main.rs:637-646 | ✅ Fixed |
 
 ### Medium Severity Findings
 
 | # | Issue | File | Status |
 |---|-------|------|--------|
-| 9 | Information leakage in error messages | main.rs:253-258 | ⚠️ Requires Fix |
-| 10 | Panic on unwrap in file processing | main.rs:265 | ⚠️ Requires Fix |
-| 11 | Missing validation in get_sample_format | main.rs:508-517 | ⚠️ Requires Fix |
-| 12 | Missing unsafe documentation | main.rs:569 | ⚠️ Requires Fix |
-| 13 | DoS via temp file exhaustion (extreme mode) | main.rs:389-420 | ⚠️ Requires Fix |
-| 14 | Unchecked TIFFReadDirectory return value | main.rs:556-559 | ⚠️ Requires Fix |
+| 9 | Information leakage in error messages | main.rs:253-258 | ✅ Fixed |
+| 10 | Panic on unwrap in file processing | main.rs:265 | ✅ Fixed |
+| 11 | Missing validation in get_sample_format | main.rs:508-517 | ✅ Fixed |
+| 12 | Missing unsafe documentation | main.rs:569 | ✅ Fixed |
+| 13 | DoS via temp file exhaustion (extreme mode) | main.rs:389-420 | ✅ Fixed |
+| 14 | Unchecked TIFFReadDirectory return value | main.rs:556-559 | ✅ Fixed |
 
 ### Low Severity Findings
 
 | # | Issue | File | Status |
 |---|-------|------|--------|
-| 15 | Hardcoded path in integration tests | integration_tests.rs:89 | ℹ️ Cosmetic |
-| 16 | Missing input validation for empty files | main.rs:536-540 | ℹ️ Minor |
-| 17 | Inconsistent safety annotation | quantize.rs:5-7 | ℹ️ Documentation |
-| 18 | ICC profile size check weakness | metadata.rs:77-82 | ℹ️ Minor |
+| 15 | Hardcoded path in integration tests | integration_tests.rs:89 | ✅ Fixed |
+| 16 | Missing input validation for empty files | main.rs:536-540 | ✅ Fixed |
+| 17 | Inconsistent safety annotation | quantize.rs:5-7 | ✅ Fixed |
+| 18 | ICC profile size check weakness | metadata.rs:77-82 | ✅ Fixed |
 
 ---
 
-## Remediation Plan
+## Remediation Status
 
-### Phase 1: Critical Fixes (Immediate)
-- [ ] Fix path traversal vulnerability with filename sanitization
-- [ ] Add return value checking for all TIFFSetField calls
+All 18 security issues identified in the March 2026 audit have been addressed:
 
-### Phase 2: High Severity (Within 2 weeks)
-- [ ] Add bounds checking for FFI-returned sizes
-- [ ] Implement integer overflow protection with `checked_*` methods
-- [ ] Copy FFI pointers to local buffers before cross-handle use
-- [ ] Add null pointer validation in analyze_file
+### Phase 1: Critical Fixes ✅ COMPLETED
+- ✅ Path traversal vulnerability fixed with filename sanitization
+- ✅ Return value checking added for all TIFFSetField calls
 
-### Phase 3: Medium Severity (Within 1 month)
-- [ ] Implement structured error handling with sanitized messages
-- [ ] Replace all `unwrap()` calls with proper error handling
-- [ ] Add safety documentation to all `unsafe` functions
-- [ ] Use temporary directories with automatic cleanup
-- [ ] Distinguish EOF from error conditions in directory reading
+### Phase 2: High Severity ✅ COMPLETED
+- ✅ Bounds checking added for FFI-returned sizes (MAX_SCANLINE_SIZE limit)
+- ✅ Integer overflow protection implemented with `checked_*` methods in tiled processing
+- ✅ FFI pointers copied to local buffers before cross-handle use
+- ✅ Null pointer validation added in analyze_file
 
-### Phase 4: Low Severity (Within 2 months)
-- [ ] Remove hardcoded paths from tests
-- [ ] Add minimum file size validation
-- [ ] Review and fix safety annotations
-- [ ] Strengthen ICC profile size validation
+### Phase 3: Medium Severity ✅ COMPLETED
+- ✅ Structured error handling with sanitized messages
+- ✅ All `unwrap()` calls replaced with proper error handling
+- ✅ Safety documentation added to all `unsafe` functions
+- ✅ Temporary directories with automatic cleanup
+- ✅ EOF distinguished from error conditions in directory reading
+
+### Phase 4: Low Severity ✅ COMPLETED
+- ✅ Hardcoded paths removed from tests
+- ✅ Minimum file size validation added
+- ✅ Safety annotations reviewed and fixed
+- ✅ ICC profile size validation strengthened (100MB limit)
 
 ---
 
@@ -191,5 +193,5 @@ All vulnerabilities identified during the v0.2.0 pre-release audit were addresse
 
 ---
 
-*Last updated: 2026-03-22*
-*Next scheduled audit: 2026-06-22*
+*Last updated: 2026-03-24*
+*Next scheduled audit: 2026-06-24*
