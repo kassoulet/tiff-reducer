@@ -152,6 +152,46 @@ docker rm temp-tiff-reducer
 
 For a **fully static binary** without Docker, use `--target x86_64-unknown-linux-musl` (requires musl toolchain).
 
+### UPX Compression (Optional - Reduces binary size by ~60-70%)
+
+After building, you can compress the binary with [UPX](https://github.com/upx/upx):
+
+```bash
+# Install UPX
+# Debian/Ubuntu
+sudo apt-get install upx-ucl
+
+# Arch Linux
+sudo pacman -S upx
+
+# macOS
+brew install upx
+```
+
+**Compress the binary:**
+```bash
+# Build first
+cargo build --release
+
+# Then compress
+upx --best --lzma ./target/release/tiff-reducer
+```
+
+**Using the build script (recommended):**
+```bash
+# Build with vendored features and compress with UPX
+./scripts/build-release.sh --upx
+
+# Build fully static via Docker and compress with UPX
+./scripts/build-release.sh --static --upx
+```
+
+**Example size reduction:**
+```
+Before UPX: 4.2 MB
+After UPX:  1.3 MB (69% reduction)
+```
+
 ### Development Build (with Test Images)
 
 Test images are included locally in `tests/images/` directory (304 TIFF files).
