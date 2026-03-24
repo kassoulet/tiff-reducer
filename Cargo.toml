@@ -25,11 +25,9 @@ pkg-config = "0.3"
 cmake = "0.1"
 
 [features]
-default = ["vendored"]
+default = []
 # Build libtiff and dependencies from source for static linking
 vendored = []
-# Use system libraries instead of vendored sources
-system = []
 
 [dev-dependencies]
 assert_cmd = "2.0"

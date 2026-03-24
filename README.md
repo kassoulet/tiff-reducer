@@ -84,17 +84,14 @@ tiff-reducer compress ./input_folder --output ./output_folder --extreme
 
 ## Installation
 
-### From Source (Recommended - Vendored Build)
+### Build from Source (Vendored - Recommended)
 
-Builds libtiff and all compression libraries from source using git. Produces a binary with minimal external dependencies.
+Builds libtiff and all compression libraries from source. No external library dependencies required.
 
 **Prerequisites:**
 ```bash
-# Debian/Ubuntu
+# Linux
 sudo apt-get install -y cmake git
-
-# Arch Linux
-sudo pacman -S cmake git
 
 # macOS
 xcode-select --install
@@ -106,104 +103,27 @@ brew install cmake
 
 **Build:**
 ```bash
-# Default vendored build (all compression libraries static)
+# Default vendored build (all compression libraries from source)
 cargo build --release
-
-# Or explicitly specify vendored feature
-cargo build --release --features vendored
 ```
 
-**What's static vs dynamic (vendored build):**
+**Cross-Platform Targets:**
 
-| Library | Linux (glibc) | Linux (musl) | macOS | Windows |
-|---------|---------------|--------------|-------|---------|
-| libtiff | ✅ Static | ✅ Static | ✅ Static | ✅ Static |
-| libdeflate | ✅ Static | ✅ Static | ✅ Static | ✅ Static |
-| libzstd | ✅ Static | ✅ Static | ✅ Static | ✅ Static |
-| liblzma | ✅ Static | ✅ Static | ✅ Static | ✅ Static |
-| libjpeg | ✅ Static | ✅ Static | ✅ Static | ✅ Static |
-| zlib | ✅ Static | ✅ Static | ✅ Static | ✅ Static |
-| libgeotiff | ⚠️ Dynamic | ⚠️ Dynamic | ⚠️ Dynamic | ⚠️ Dynamic |
-| libc | ⚠️ Dynamic (glibc) | ✅ Static (musl) | ⚠️ Dynamic | ✅ Static |
+| Platform | Target | Command |
+|----------|--------|---------|
+| **Linux (fully static)** | `x86_64-unknown-linux-musl` | `cargo build --release --target x86_64-unknown-linux-musl` |
+| **Linux (glibc)** | native | `cargo build --release` |
+| **macOS (Intel)** | `x86_64-apple-darwin` | `cargo build --release --target x86_64-apple-darwin` |
+| **macOS (Apple Silicon)** | `aarch64-apple-darwin` | `cargo build --release --target aarch64-apple-darwin` |
+| **Windows** | `x86_64-pc-windows-msvc` | `cargo build --release` |
 
-**Result:** Compression libraries are statically linked. For fully static binaries:
-- **Linux**: Use musl target (see below)
-- **macOS**: Dynamic system libraries are standard and recommended
-- **Windows**: MSVCRT is statically linked by default
-
-### Fully Static Binary (Linux - musl)
-
-For a fully static binary on Linux (no glibc dependency):
-
+**Using the build script:**
 ```bash
-# Install musl toolchain
-rustup target add x86_64-unknown-linux-musl
-
-# Build with vendored features
-cargo build --release --features vendored --target x86_64-unknown-linux-musl
-
-# Or use the build script
+# Linux - fully static with UPX compression
 ./scripts/build-release.sh --musl --upx
-```
 
-**Verify static linking:**
-```bash
-ldd ./target/x86_64-unknown-linux-musl/release/tiff-reducer
-# Should show: "not a dynamic executable"
-```
-
-### Fully Static Binary (via Docker - Linux)
-
-Alternative Docker-based musl build:
-
-```bash
-docker build -f Dockerfile.static -t tiff-reducer-builder .
-# Extract the binary
-docker create --name temp-tiff-reducer tiff-reducer-builder
-docker cp temp-tiff-reducer:/tiff-reducer ./tiff-reducer
-docker rm temp-tiff-reducer
-```
-
-### macOS (Universal Binary)
-
-```bash
-# x86_64 (Intel)
-cargo build --release --features vendored --target x86_64-apple-darwin
-
-# arm64 (Apple Silicon)
-cargo build --release --features vendored --target aarch64-apple-darwin
-
-# Universal (both architectures)
-cargo build --release --features vendored
-lipo -create \
-  target/x86_64-apple-darwin/release/tiff-reducer \
-  target/aarch64-apple-darwin/release/tiff-reducer \
-  -output tiff-reducer
-```
-
-### Windows (MSVC)
-
-```bash
-# Requires Visual Studio Build Tools with C++ support
-cargo build --release --features vendored
-```
-
-### System Libraries (Alternative)
-
-Use system-installed libtiff and dependencies. Requires development headers.
-
-**Prerequisites:**
-```bash
-# Debian/Ubuntu
-sudo apt-get install -y libtiff-dev libzstd-dev liblzma-dev libjpeg-dev libwebp-dev libdeflate-dev
-
-# Arch Linux
-sudo pacman -S libtiff zstd xz libjpeg-turbo libwebp libdeflate
-```
-
-**Build:**
-```bash
-cargo build --release --features system
+# Native build with UPX compression
+./scripts/build-release.sh --upx
 ```
 
 ### UPX Compression (Optional - Reduces binary size by ~60-70%)
