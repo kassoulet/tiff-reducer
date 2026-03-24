@@ -1,8 +1,8 @@
 //! Build script for tiff-reducer
 //!
 //! # Features
-//! - **vendored** (default): Builds libtiff and all dependencies from source using git submodules.
-//!   Produces a fully static binary with no external dependencies.
+//! - **vendored** (default): Builds libtiff and all dependencies from source using git.
+//!   Produces a binary with statically linked compression libraries.
 //! - **system**: Uses system-installed libtiff and libgeotiff via pkg-config.
 //!   Produces a dynamically linked binary.
 //!
@@ -13,6 +13,24 @@
 //! - libzstd (v1.5.6)
 //! - liblzma/xz (v5.6.3)
 //! - libtiff (v4.7.1)
+//!
+//! # Cross-Platform Builds
+//!
+//! ## Linux (fully static)
+//! ```bash
+//! rustup target add x86_64-unknown-linux-musl
+//! cargo build --release --features vendored --target x86_64-unknown-linux-musl
+//! ```
+//!
+//! ## macOS (universal binary)
+//! ```bash
+//! cargo build --release --features vendored
+//! ```
+//!
+//! ## Windows (statically linked)
+//! ```bash
+//! cargo build --release --features vendored
+//! ```
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -31,6 +49,7 @@ fn main() {
     }
 
     // Default: vendored static build from git sources
+    // For musl target, this produces a fully static binary
     build_fully_static(&out_dir, &target);
 }
 

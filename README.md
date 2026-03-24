@@ -84,7 +84,7 @@ tiff-reducer compress ./input_folder --output ./output_folder --extreme
 
 ## Installation
 
-### From Source (Vendored - Default)
+### From Source (Recommended - Vendored Build)
 
 Builds libtiff and all compression libraries from source using git. Produces a binary with minimal external dependencies.
 
@@ -95,6 +95,13 @@ sudo apt-get install -y cmake git
 
 # Arch Linux
 sudo pacman -S cmake git
+
+# macOS
+xcode-select --install
+brew install cmake
+
+# Windows
+# Install Visual Studio Build Tools with C++ support
 ```
 
 **Build:**
@@ -108,17 +115,78 @@ cargo build --release --features vendored
 
 **What's static vs dynamic (vendored build):**
 
-| Library | Status |
-|---------|--------|
-| libtiff | ✅ Static (built from source) |
-| libdeflate | ✅ Static (built from source) |
-| libzstd | ✅ Static (built from source) |
-| liblzma | ✅ Static (built from source) |
-| libjpeg | ✅ Static (built from source) |
-| zlib | ✅ Static (built from source) |
-| glibc | ⚠️ Dynamic (system C library) |
+| Library | Linux (glibc) | Linux (musl) | macOS | Windows |
+|---------|---------------|--------------|-------|---------|
+| libtiff | ✅ Static | ✅ Static | ✅ Static | ✅ Static |
+| libdeflate | ✅ Static | ✅ Static | ✅ Static | ✅ Static |
+| libzstd | ✅ Static | ✅ Static | ✅ Static | ✅ Static |
+| liblzma | ✅ Static | ✅ Static | ✅ Static | ✅ Static |
+| libjpeg | ✅ Static | ✅ Static | ✅ Static | ✅ Static |
+| zlib | ✅ Static | ✅ Static | ✅ Static | ✅ Static |
+| libgeotiff | ⚠️ Dynamic | ⚠️ Dynamic | ⚠️ Dynamic | ⚠️ Dynamic |
+| libc | ⚠️ Dynamic (glibc) | ✅ Static (musl) | ⚠️ Dynamic | ✅ Static |
 
-**Result:** The binary only depends on glibc (`libc.so.6`, `libm.so.6`, `libgcc_s.so.1`). All compression libraries are statically linked.
+**Result:** Compression libraries are statically linked. For fully static binaries:
+- **Linux**: Use musl target (see below)
+- **macOS**: Dynamic system libraries are standard and recommended
+- **Windows**: MSVCRT is statically linked by default
+
+### Fully Static Binary (Linux - musl)
+
+For a fully static binary on Linux (no glibc dependency):
+
+```bash
+# Install musl toolchain
+rustup target add x86_64-unknown-linux-musl
+
+# Build with vendored features
+cargo build --release --features vendored --target x86_64-unknown-linux-musl
+
+# Or use the build script
+./scripts/build-release.sh --musl --upx
+```
+
+**Verify static linking:**
+```bash
+ldd ./target/x86_64-unknown-linux-musl/release/tiff-reducer
+# Should show: "not a dynamic executable"
+```
+
+### Fully Static Binary (via Docker - Linux)
+
+Alternative Docker-based musl build:
+
+```bash
+docker build -f Dockerfile.static -t tiff-reducer-builder .
+# Extract the binary
+docker create --name temp-tiff-reducer tiff-reducer-builder
+docker cp temp-tiff-reducer:/tiff-reducer ./tiff-reducer
+docker rm temp-tiff-reducer
+```
+
+### macOS (Universal Binary)
+
+```bash
+# x86_64 (Intel)
+cargo build --release --features vendored --target x86_64-apple-darwin
+
+# arm64 (Apple Silicon)
+cargo build --release --features vendored --target aarch64-apple-darwin
+
+# Universal (both architectures)
+cargo build --release --features vendored
+lipo -create \
+  target/x86_64-apple-darwin/release/tiff-reducer \
+  target/aarch64-apple-darwin/release/tiff-reducer \
+  -output tiff-reducer
+```
+
+### Windows (MSVC)
+
+```bash
+# Requires Visual Studio Build Tools with C++ support
+cargo build --release --features vendored
+```
 
 ### System Libraries (Alternative)
 
@@ -137,26 +205,6 @@ sudo pacman -S libtiff zstd xz libjpeg-turbo libwebp libdeflate
 ```bash
 cargo build --release --features system
 ```
-
-### Fully Static Binary (via Docker)
-
-Produces a musl-linked binary with all libraries statically linked (no glibc dependency).
-
-```bash
-docker build -f Dockerfile.static -t tiff-reducer-builder .
-# Extract the binary
-docker create --name temp-tiff-reducer tiff-reducer-builder
-docker cp temp-tiff-reducer:/tiff-reducer ./tiff-reducer
-docker rm temp-tiff-reducer
-```
-
-**Verify static linking:**
-```bash
-ldd ./tiff-reducer
-# Should show: "not a dynamic executable"
-```
-
-For a **fully static binary** without Docker, use `--target x86_64-unknown-linux-musl` (requires musl toolchain).
 
 ### UPX Compression (Optional - Reduces binary size by ~60-70%)
 
