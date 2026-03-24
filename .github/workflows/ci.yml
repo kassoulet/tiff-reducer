@@ -27,6 +27,18 @@ jobs:
     - name: Build
       run: cargo build --verbose
 
+    - name: Test UPX compression (optional)
+      run: |
+        if command -v upx &> /dev/null; then
+          echo "UPX available, testing compression..."
+          cp ./target/debug/tiff-reducer ./tiff-reducer-upx-test
+          upx --best --lzma ./tiff-reducer-upx-test
+          echo "UPX compression successful"
+          rm ./tiff-reducer-upx-test
+        else
+          echo "UPX not available, skipping compression test"
+        fi
+
     - name: Run error handling tests
       run: cargo test --test integration_tests handling --verbose
 

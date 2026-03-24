@@ -11,6 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install UPX
+        run: sudo apt-get install -y upx-ucl
+
       - name: Build static binary via Docker
         run: docker build -t tiffthin-static .
 
@@ -19,6 +22,14 @@ jobs:
           docker create --name temp-tiffthin tiffthin-static
           docker cp temp-tiffthin:/usr/local/bin/tiff-reducer ./tiff-reducer
           docker rm temp-tiffthin
+
+      - name: Compress with UPX
+        run: |
+          echo "Binary size before UPX:"
+          ls -lh ./tiff-reducer
+          upx --best --lzma ./tiff-reducer
+          echo "Binary size after UPX:"
+          ls -lh ./tiff-reducer
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
