@@ -201,32 +201,29 @@ To run tests:
 # Run Rust integration tests (recommended)
 cargo test --test integration_tests handling
 
-# Generate HTML Visual Test Report (easy way)
+# Generate Markdown Test Report
 ./tests/generate-report.sh
 
-# Generate HTML Visual Test Report (manual)
-python3 tests/generate_html_report.py -i tests/images -o tests/report -n 20
+# Generate report with custom options
+python3 tests/generate_test_report.py -i tests/images -o tests/report -n 20
 
-# View report in browser
-./tests/generate-report.sh --open    # Auto-open after generation
-xdg-open tests/report/index.html     # Linux (manual)
-open tests/report/index.html         # macOS (manual)
+# View report
+cat tests/report/README.md
 ```
 
 **Script Options:**
 ```bash
-./tests/generate-report.sh -n 50           # Process 50 images (default: 20)
+./tests/generate-report.sh -n 50           # Process 50 images (default: all)
 ./tests/generate-report.sh -f deflate -l 9 # Use Deflate compression
-./tests/generate-report.sh --open          # Open in browser after generation
+./tests/generate-report.sh -o ./my-report  # Custom output directory
 ./tests/generate-report.sh --help          # Show all options
 ```
 
-**HTML Report Features:**
-- Side-by-side image comparison (thumbnails)
-- Metadata comparison tables (dimensions, bands, compression, resolution)
-- Quality metrics (PSNR, SSIM)
-- Pass/fail indicators with color coding
-- Summary dashboard with statistics
+**Markdown Report Features:**
+- Summary statistics (pass/fail counts and percentages)
+- Failure breakdown by error type
+- List of working images with thumbnails and compression ratios
+- List of failed images with error messages
 
 **Note:** Test images include various formats:
 - Standard TIFF files (RGB, grayscale, palette)
@@ -257,14 +254,13 @@ open tests/report/index.html         # macOS (manual)
 This project uses GitHub Actions for continuous integration and testing.
 
 **Workflows:**
-- **CI** (`.github/workflows/ci.yml`): Build, format check, clippy, and error handling tests
-- **Visual Tests** (`.github/workflows/test.yml`): HTML visual test report generation
-- **Release** (`.github/workflows/release.yml`): Automated release creation
+- **CI** (`.github/workflows/ci.yml`): Build, format check, clippy, error handling tests, and markdown test report
+- **Release** (`.github/workflows/release.yml`): Automated release creation with UPX compression
 
-**HTML Visual Report:**
+**Test Report:**
 - Runs on push to `kassoulet/tiff-reducer` repository
 - Processes 20 test images with ZSTD compression
-- Uploads report and thumbnails as CI artifacts (7-day retention)
+- Uploads markdown report and thumbnails as CI artifacts (7-day retention)
 - View artifacts from GitHub Actions run page
 
 ### Pre-commit Hooks

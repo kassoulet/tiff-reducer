@@ -74,26 +74,16 @@ jobs:
     - name: Build release binary
       run: cargo build --release
 
-    - name: Generate HTML Visual Test Report
+    - name: Generate Markdown Test Report
       run: |
-        python3 tests/generate_html_report.py \
-          --input tests/images \
-          --output tests/report \
-          --binary ./target/release/tiff-reducer \
+        ./tests/generate-report.sh \
           --format zstd \
           --level 19 \
-          --limit 20
+          --number 20
 
-    - name: Upload HTML Report
+    - name: Upload Test Report
       uses: actions/upload-artifact@v4
       with:
         name: test-report
         path: tests/report/
-        retention-days: 7
-
-    - name: Upload test thumbnails
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-thumbnails
-        path: tests/report/thumbnails/
         retention-days: 7
