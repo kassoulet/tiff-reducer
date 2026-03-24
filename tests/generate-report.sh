@@ -126,10 +126,14 @@ generate_report() {
     # Create output directory
     mkdir -p "$OUTPUT_DIR/thumbnails"
 
+    # Detect target directory from cargo metadata or use default
+    TARGET_DIR=$(cargo metadata --format-version 1 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('target_directory'))" 2>/dev/null || echo "$PROJECT_ROOT/target")
+    BINARY_PATH="$TARGET_DIR/release/tiff-reducer"
+
     python3 "$SCRIPT_DIR/generate_test_report.py" \
         --input "$PROJECT_ROOT/tests/images" \
         --output "$OUTPUT_DIR" \
-        --binary "$PROJECT_ROOT/target/release/tiff-reducer" \
+        --binary "$BINARY_PATH" \
         --format "$FORMAT" \
         --level "$LEVEL" \
         ${NUM_IMAGES:+--limit "$NUM_IMAGES"}
