@@ -80,14 +80,17 @@ build_vendored() {
 build_static() {
     echo "Building fully static binary via Docker..."
     cd "$PROJECT_DIR"
-    
+
     docker build -t tiff-reducer-static .
-    
+
+    # Remove any existing container with the same name
+    docker rm -f temp-tiff-reducer 2>/dev/null || true
+
     # Create container and extract binary
     docker create --name temp-tiff-reducer tiff-reducer-static
     docker cp temp-tiff-reducer:/usr/local/bin/tiff-reducer "$BINARY_PATH"
     docker rm temp-tiff-reducer
-    
+
     if [ -f "$BINARY_PATH" ]; then
         local size_before=$(stat -c%s "$BINARY_PATH" 2>/dev/null || stat -f%z "$BINARY_PATH" 2>/dev/null)
         echo "Build successful: $BINARY_PATH ($(numfmt --to=iec-i --suffix=B $size_before 2>/dev/null || echo "${size_before} bytes"))"
