@@ -1,10 +1,7 @@
 //! Build script for tiff-reducer
 //!
-//! # Features
-//! - **vendored** (default): Builds libtiff and all dependencies from source using git.
-//!   Produces a binary with statically linked compression libraries.
-//! - **system**: Uses system-installed libtiff and libgeotiff via pkg-config.
-//!   Produces a dynamically linked binary.
+//! Builds libtiff and all compression libraries from source.
+//! No external library dependencies required.
 //!
 //! # Vendored Dependencies (from git)
 //! - zlib (v1.3.1)
@@ -19,17 +16,17 @@
 //! ## Linux (fully static)
 //! ```bash
 //! rustup target add x86_64-unknown-linux-musl
-//! cargo build --release --features vendored --target x86_64-unknown-linux-musl
+//! cargo build --release --target x86_64-unknown-linux-musl
 //! ```
 //!
 //! ## macOS (universal binary)
 //! ```bash
-//! cargo build --release --features vendored
+//! cargo build --release
 //! ```
 //!
 //! ## Windows (statically linked)
 //! ```bash
-//! cargo build --release --features vendored
+//! cargo build --release
 //! ```
 
 use std::env;
@@ -39,41 +36,9 @@ use std::process::Command;
 fn main() {
     let target = env::var("TARGET").unwrap_or_default();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    // Vendored is now the default; system feature opts out
-    let is_vendored = !cfg!(feature = "system");
 
-    // Try system libraries first if system feature is enabled
-    if !is_vendored {
-        build_system(&target);
-        return;
-    }
-
-    // Default: vendored static build from git sources
-    // For musl target, this produces a fully static binary
+    // Always build vendored dependencies from source
     build_fully_static(&out_dir, &target);
-}
-
-fn build_system(_target: &str) {
-    // Try pkg-config first (system libraries)
-    let mut config = pkg_config::Config::new();
-    config.atleast_version("4.0");
-
-    if config.probe("libtiff-4").is_ok() {
-        // Also link libgeotiff for GeoTIFF tag support
-        if pkg_config::Config::new()
-            .atleast_version("1.4")
-            .probe("libgeotiff")
-            .is_ok()
-        {
-            println!("cargo:rustc-link-lib=geotiff");
-        }
-        return;
-    }
-
-    // Fallback: manual linking
-    println!("cargo:rustc-link-lib=tiff");
-    // Link libgeotiff if available for GeoTIFF support
-    println!("cargo:rustc-link-lib=geotiff");
 }
 
 fn build_fully_static(out_dir: &Path, target: &str) {

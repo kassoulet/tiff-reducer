@@ -82,15 +82,15 @@ check_upx() {
 
 # Function to build with vendored features
 build_vendored() {
-    echo "Building with vendored features..."
+    echo "Building with vendored dependencies..."
     cd "$PROJECT_DIR"
     
     if [ "$USE_MUSL" = true ]; then
         echo "Target: $TARGET_TRIPLE (musl - fully static)"
-        cargo build --release --features vendored --target "$TARGET_TRIPLE"
+        cargo build --release --target "$TARGET_TRIPLE"
     else
         echo "Target: native"
-        cargo build --release --features vendored
+        cargo build --release
     fi
 
     if [ -f "$BINARY_PATH" ]; then
