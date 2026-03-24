@@ -2,11 +2,13 @@
 """
 Generate a comprehensive test report for tiff-reducer.
 Tests all images and categorizes them by working/non-working status.
+Outputs a Markdown report.
 """
 
 import subprocess
 import tempfile
 import os
+import argparse
 from pathlib import Path
 from datetime import datetime
 
@@ -53,18 +55,17 @@ def get_tiffinfo(filepath):
     except Exception as e:
         return f"Error: {e}"
 
-def test_compression(input_path, output_path, format='zstd', level=19):
+def test_compression(input_path, output_path, binary_path, format='zstd', level=19):
     """Test compression of a single file."""
-    # Use cargo to run the binary (works for both dev and release builds)
     cmd = [
-        'cargo', 'run', '--release', '--quiet', '--',
+        binary_path,
         'compress',
         str(input_path),
         '-o', str(output_path),
         '-f', format,
         '-l', str(level)
     ]
-    
+
     try:
         result = subprocess.run(
             cmd,
@@ -72,7 +73,7 @@ def test_compression(input_path, output_path, format='zstd', level=19):
             text=True,
             timeout=60
         )
-        
+
         if result.returncode != 0:
             if 'TIFFWriteDirectorySec' in result.stderr:
                 return False, 'TIFFWriteDirectorySec crash'
@@ -84,13 +85,13 @@ def test_compression(input_path, output_path, format='zstd', level=19):
                 return False, 'Write error'
             else:
                 return False, result.stderr[:200]
-        
+
         # Check if output file exists and has content
         if not output_path.exists() or output_path.stat().st_size == 0:
             return False, 'No output file'
-        
+
         return True, 'Success'
-        
+
     except subprocess.TimeoutExpired:
         return False, 'Timeout'
     except Exception as e:
@@ -99,7 +100,7 @@ def test_compression(input_path, output_path, format='zstd', level=19):
 def get_file_info(filepath):
     """Extract key information from tiffinfo output."""
     info = get_tiffinfo(filepath)
-    
+
     result = {
         'pages': 1,
         'tiled': False,
@@ -110,14 +111,14 @@ def get_file_info(filepath):
         'width': 'Unknown',
         'height': 'Unknown',
     }
-    
+
     # Count pages
     pages = info.count('=== TIFF directory')
     result['pages'] = pages
-    
+
     # Check if tiled
     result['tiled'] = 'Tile Width:' in info
-    
+
     # Extract compression
     for line in info.split('\n'):
         if 'Compression Scheme:' in line:
@@ -132,20 +133,56 @@ def get_file_info(filepath):
             parts = line.split(':')[1].strip().split()
             result['width'] = parts[0]
             result['height'] = parts[2] if len(parts) > 2 else 'Unknown'
-    
+
     return result
 
 def main():
-    # Ensure binary is built
-    print("Building tiff-reducer...")
-    subprocess.run(['cargo', 'build', '--release'], check=True, capture_output=True)
+    parser = argparse.ArgumentParser(
+        description="Generate Markdown Test Report for tiff-reducer"
+    )
+    parser.add_argument(
+        "--input", "-i", default="tests/images", help="Input directory with TIFF files"
+    )
+    parser.add_argument(
+        "--output", "-o", default="tests/report", help="Output directory for report"
+    )
+    parser.add_argument(
+        "--binary",
+        "-b",
+        default="./target/release/tiff-reducer",
+        help="Path to tiff-reducer binary",
+    )
+    parser.add_argument("--format", "-f", default="zstd", help="Compression format")
+    parser.add_argument("--level", "-l", type=int, default=19, help="Compression level")
+    parser.add_argument(
+        "--limit", "-n", type=int, default=None, help="Limit number of test images"
+    )
+
+    args = parser.parse_args()
+
+    # Ensure binary exists
+    binary_path = Path(args.binary)
+    if not binary_path.exists():
+        print(f"Error: Binary not found at {binary_path}")
+        print("Run: cargo build --release")
+        return 1
 
     # Get all test images
-    test_dir = Path('tests/images')
+    test_dir = Path(args.input)
+    if not test_dir.exists():
+        print(f"Error: Input directory not found: {test_dir}")
+        return 1
+
     images = sorted([f for f in test_dir.glob('*.tif*') if f.is_file()])
 
-    # Create thumbnails directory
-    thumbnails_dir = Path('tests/report/thumbnails')
+    # Apply limit if specified
+    if args.limit:
+        images = images[:args.limit]
+
+    # Create output directories
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    thumbnails_dir = output_dir / 'thumbnails'
     thumbnails_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Testing {len(images)} images...")
@@ -163,7 +200,7 @@ def main():
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / 'output.tif'
-            success, error = test_compression(image_path, output_path)
+            success, error = test_compression(image_path, output_path, binary_path, args.format, args.level)
 
             # Generate thumbnails
             thumb_orig = None
@@ -173,7 +210,7 @@ def main():
                 thumb_comp_name = f"{image_path.stem}_comp.png"
                 thumb_orig_path = thumbnails_dir / thumb_orig_name
                 thumb_comp_path = thumbnails_dir / thumb_comp_name
-                
+
                 if create_thumbnail(image_path, thumb_orig_path):
                     thumb_orig = f"thumbnails/{thumb_orig_name}"
                 if create_thumbnail(output_path, thumb_comp_path):
@@ -210,9 +247,10 @@ def main():
                 print(f'❌ ({error})')
 
     # Generate report
-    generate_report(results, images, thumbnails_dir)
+    generate_report(results, images, output_dir)
+    return 0
 
-def generate_report(results, all_images, thumbnails_dir):
+def generate_report(results, all_images, output_dir):
     """Generate Markdown README report with thumbnails."""
 
     total = len(all_images)
@@ -259,7 +297,7 @@ def generate_report(results, all_images, thumbnails_dir):
             reduction = (1 - img['comp_size']/img['orig_size'])*100
             report.append(f"### {img['name']}")
             report.append("")
-            report.append(f"![Compressed](report/thumbnails/{img['stem']}_comp.png)")
+            report.append(f"![Compressed]({img['stem']}_comp.png)")
             report.append("")
             report.append(f"- **Original size:** {img['orig_size']:,} bytes")
             report.append(f"- **Compressed size:** {img['comp_size']:,} bytes")
@@ -272,7 +310,7 @@ def generate_report(results, all_images, thumbnails_dir):
             report.append("")
 
     # Failed images
-    all_failed = (results['failed_directory'] + results['failed_read'] + 
+    all_failed = (results['failed_directory'] + results['failed_read'] +
                   results['failed_tile'] + results['failed_other'])
 
     report.append("## ❌ Failed Images")
@@ -289,12 +327,12 @@ def generate_report(results, all_images, thumbnails_dir):
     report.append("")
 
     # Write report
-    report_path = Path('tests/README.md')
+    report_path = output_dir / 'README.md'
     with open(report_path, 'w') as f:
         f.write('\n'.join(report))
 
     print(f"\nReport written to {report_path}")
-    print(f"Thumbnails stored in {thumbnails_dir}/")
+    print(f"Thumbnails stored in {output_dir}/thumbnails/")
 
     # Also print summary
     print(f"\n{'='*60}")
@@ -309,4 +347,4 @@ def generate_report(results, all_images, thumbnails_dir):
     print(f"{'='*60}")
 
 if __name__ == '__main__':
-    main()
+    exit(main())
