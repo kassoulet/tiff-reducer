@@ -252,8 +252,12 @@ fn analyze_file(path: &Path) -> Result<()> {
             TIFFClose(tif);
             return Err(anyhow!("Failed to read samples per pixel"));
         }
-        TIFFGetField(tif, TIFFTAG_COMPRESSION, &mut comp);
-        TIFFGetField(tif, TIFFTAG_SAMPLEFORMAT, &mut fmt);
+        if TIFFGetField(tif, TIFFTAG_COMPRESSION, &mut comp) == 0 {
+            comp = COMPRESSION_NONE;
+        }
+        if TIFFGetField(tif, TIFFTAG_SAMPLEFORMAT, &mut fmt) == 0 {
+            fmt = SAMPLEFORMAT_UINT;
+        }
 
         println!("File: {:?}", path);
         println!("Dimensions: {}x{}", w, h);
@@ -692,8 +696,12 @@ unsafe fn process_single_ifd(
     let mut photometric: u16 = 0;
     let mut planar: u16 = 0;
 
-    TIFFGetField(tif_src, TIFFTAG_BITSPERSAMPLE, &mut bps);
-    TIFFGetField(tif_src, TIFFTAG_SAMPLESPERPIXEL, &mut spp);
+    if TIFFGetField(tif_src, TIFFTAG_BITSPERSAMPLE, &mut bps) == 0 || bps == 0 {
+        return Err(anyhow!("Failed to read bits per sample"));
+    }
+    if TIFFGetField(tif_src, TIFFTAG_SAMPLESPERPIXEL, &mut spp) == 0 {
+        spp = 1; // Default to 1 if tag is missing
+    }
     TIFFGetField(tif_src, TIFFTAG_SAMPLEFORMAT, &mut fmt);
     TIFFGetField(tif_src, TIFFTAG_PHOTOMETRIC, &mut photometric);
     TIFFGetField(tif_src, TIFFTAG_PLANARCONFIG, &mut planar);
@@ -751,8 +759,11 @@ unsafe fn process_single_ifd(
     if is_tiled {
         let mut tile_width: u32 = 0;
         let mut tile_length: u32 = 0;
-        TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width);
-        TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length);
+        if TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width) == 0
+            || TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length) == 0
+        {
+            return Err(anyhow!("Failed to read tile dimensions from tiled image"));
+        }
         if TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h) == 0 {
             return Err(anyhow!("Failed to set rows per strip"));
         }
@@ -915,12 +926,18 @@ unsafe fn process_striped_image(
 
         if quantize {
             if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
-                let actual_samples = (in_scanline / 4).min((w * _spp as u32) as usize);
+                let total_samples = w
+                    .checked_mul(_spp as u32)
+                    .ok_or_else(|| anyhow!("Sample count overflow"))?;
+                let actual_samples = (in_scanline / 4).min(total_samples as usize);
                 let slice_f32 =
                     std::slice::from_raw_parts(buf_in.as_ptr() as *const f32, actual_samples);
                 crate::quantize::quantize_f32_to_u8(slice_f32, &mut buf_out);
             } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
-                let actual_samples = (in_scanline / 2).min((w * _spp as u32) as usize);
+                let total_samples = w
+                    .checked_mul(_spp as u32)
+                    .ok_or_else(|| anyhow!("Sample count overflow"))?;
+                let actual_samples = (in_scanline / 2).min(total_samples as usize);
                 let slice_i16 =
                     std::slice::from_raw_parts(buf_in.as_ptr() as *const i16, actual_samples);
                 crate::quantize::quantize_i16_to_u8(slice_i16, &mut buf_out);
@@ -960,8 +977,10 @@ unsafe fn process_tiled_image(
     let mut tile_length: u32 = 0;
     if TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width) == 0
         || TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length) == 0
+        || tile_width == 0
+        || tile_length == 0
     {
-        return Err(anyhow!("Failed to read tile dimensions"));
+        return Err(anyhow!("Invalid or missing tile dimensions"));
     }
 
     // Calculate bytes per pixel and row size with overflow checking
