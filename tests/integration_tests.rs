@@ -448,7 +448,6 @@ fn test_pixel_content_preserved_lossless() {
 // ============================================================================
 
 #[test]
-#[ignore = "GeoTIFF metadata preservation is not fully working yet - mask_lzw.tif fails due to missing libgeotiff in build environment"]
 fn test_geotiff_metadata_preservation() {
     // Test with mask_lzw.tif which contains GeoTIFF tags
     // Use absolute path to avoid libtiff issues with relative paths
