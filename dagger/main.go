@@ -19,6 +19,10 @@ func (m *LibtiffRs) baseContainer() *dagger.Container {
 		WithExec([]string{"apt-get", "update"}).
 		WithExec([]string{
 			"apt-get", "install", "-y",
+			"git",
+			"cmake",
+			"make",
+			"g++",
 			"libtiff-dev",
 			"libzstd-dev",
 			"liblzma-dev",
