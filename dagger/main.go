@@ -16,6 +16,7 @@ type LibtiffRs struct{}
 func (m *LibtiffRs) baseContainer() *dagger.Container {
 	return dag.Container().
 		From("rust:latest").
+		WithExec([]string{"rustup", "component", "add", "rustfmt", "clippy"}).
 		WithExec([]string{"apt-get", "update"}).
 		WithExec([]string{
 			"apt-get", "install", "-y",
