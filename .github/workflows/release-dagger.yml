@@ -1,0 +1,53 @@
+name: Release (Dagger)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Dagger CLI
+        run: |
+          curl -L https://dl.dagger.io/dagger/install.sh | sh
+          sudo mv bin/dagger /usr/local/bin/
+          dagger version
+
+      - name: Build static binary with UPX
+        run: |
+          cd dagger
+          npm install
+          dagger call build-with-upx export --path=../tiff-reducer
+
+      - name: Show binary size
+        run: |
+          echo "Binary size after UPX:"
+          ls -lh ./tiff-reducer
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tiff-reducer-static
+          path: ./tiff-reducer
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: false
+          files: ./tiff-reducer
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./tiff-reducer
+          asset_name: tiff-reducer-linux-x64
+          asset_content_type: application/octet-stream

@@ -1,0 +1,22 @@
+{
+  "name": "tiff-reducer-dagger",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "ci": "dagger call ci",
+    "build": "dagger call build",
+    "build-release": "dagger call build-release",
+    "test": "dagger call test",
+    "check-format": "dagger call check-format",
+    "clippy": "dagger call clippy",
+    "test-error-handling": "dagger call test-error-handling",
+    "test-upx": "dagger call test-upx-compression",
+    "generate-markdown-report": "dagger call generate-markdown-report",
+    "generate-html-report": "dagger call generate-html-report",
+    "build-static": "dagger call build-static",
+    "build-with-upx": "dagger call build-with-upx"
+  },
+  "dependencies": {
+    "@dagger.io/dagger": "latest"
+  }
+}

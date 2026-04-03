@@ -1,0 +1,54 @@
+name: CI (Dagger)
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  dagger-ci:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Dagger CLI
+      run: |
+        curl -L https://dl.dagger.io/dagger/install.sh | sh
+        sudo mv bin/dagger /usr/local/bin/
+        dagger version
+
+    - name: Run full CI pipeline
+      run: |
+        cd dagger
+        npm install
+        dagger call ci
+
+  html-report:
+    name: HTML Visual Report
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.repository_owner == 'kassoulet'
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Dagger CLI
+      run: |
+        curl -L https://dl.dagger.io/dagger/install.sh | sh
+        sudo mv bin/dagger /usr/local/bin/
+        dagger version
+
+    - name: Generate HTML Report
+      run: |
+        cd dagger
+        npm install
+        dagger call generate-html-report export --path=../tests/report
+
+    - name: Upload Test Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-report
+        path: tests/report/
+        retention-days: 7

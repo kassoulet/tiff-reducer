@@ -1,0 +1,6 @@
+{
+  "name": "tiff-reducer",
+  "sdk": "typescript",
+  "source": "ts",
+  "engineVersion": "v0.20.3"
+}
