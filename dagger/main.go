@@ -15,7 +15,7 @@ type LibtiffRs struct{}
 // Returns a container with all system dependencies installed
 func (m *LibtiffRs) baseContainer() *dagger.Container {
 	return dag.Container().
-		From("rust:latest").
+		From("rust:1.89").
 		WithExec([]string{"rustup", "component", "add", "rustfmt", "clippy"}).
 		WithExec([]string{"apt-get", "update"}).
 		WithExec([]string{
