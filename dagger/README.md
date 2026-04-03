@@ -5,15 +5,12 @@ This directory contains the [Dagger](https://dagger.io) pipeline for building, t
 ## Prerequisites
 
 - [Dagger CLI](https://docs.dagger.io/install) (v0.18.0+)
-- Node.js 18+
 - Docker or compatible container runtime
 
 ## Available Commands
 
 ### Full CI Pipeline
 ```bash
-cd dagger
-npm install
 dagger call ci
 ```
 
@@ -50,15 +47,18 @@ dagger call generate-html-report
 # Build static binary
 dagger call build-static
 
+# Get static binary file
+dagger call get-static-binary export --path=tiff-reducer
+
 # Build with UPX compression
-dagger call build-with-upx
+dagger call build-with-upx export --path=tiff-reducer
 ```
 
 ## Pipeline Structure
 
-- `ts/index.ts`: Main Dagger module with all pipeline functions
-- `package.json`: Node.js dependencies
-- `tsconfig.json`: TypeScript configuration
+- `main.go`: Main Dagger module with all pipeline functions (Go SDK)
+- `dagger.gen.go`: Auto-generated Dagger client
+- `go.mod`, `go.sum`: Go module dependencies
 
 ## GitHub Actions Integration
 

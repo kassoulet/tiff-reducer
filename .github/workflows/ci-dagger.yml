@@ -22,8 +22,6 @@ jobs:
 
     - name: Run full CI pipeline
       run: |
-        cd dagger
-        npm install
         dagger call ci
 
   html-report:
@@ -42,9 +40,7 @@ jobs:
 
     - name: Generate HTML Report
       run: |
-        cd dagger
-        npm install
-        dagger call generate-html-report export --path=../tests/report
+        dagger call generate-html-report export --path=tests/report
 
     - name: Upload Test Report
       uses: actions/upload-artifact@v4

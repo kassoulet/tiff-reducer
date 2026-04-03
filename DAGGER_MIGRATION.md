@@ -20,12 +20,11 @@ The following workflows have been converted to Dagger:
 
 ```
 dagger/
-├── ts/
-│   └── index.ts          # Main Dagger module with all pipeline functions
-├── package.json          # Node.js dependencies
-├── tsconfig.json         # TypeScript configuration
-├── README.md             # Dagger-specific documentation
-└── .gitignore            # Ignore node_modules and build artifacts
+├── main.go               # Main Dagger module with all pipeline functions (Go SDK)
+├── dagger.gen.go         # Auto-generated Dagger client
+├── go.mod                # Go module dependencies
+├── go.sum                # Go dependencies checksum
+└── README.md             # Dagger-specific documentation
 
 dagger.json               # Dagger module configuration
 .github/workflows/*-dagger.yml  # GitHub Actions workflows using Dagger
@@ -62,13 +61,7 @@ You can now run the same pipeline locally that runs in CI:
 curl -L https://dl.dagger.io/dagger/install.sh | sh
 sudo mv bin/dagger /usr/local/bin/
 
-# Navigate to dagger directory
-cd dagger
-
-# Install dependencies
-npm install
-
-# Run full CI suite
+# Run full CI suite from project root
 dagger call ci
 
 # Or run individual functions
@@ -83,7 +76,8 @@ dagger call clippy
 2. **Reproducibility**: Docker-based execution ensures consistent environments
 3. **Portability**: Can run on any CI system or locally
 4. **Caching**: Dagger intelligently caches build steps
-5. **Type Safety**: TypeScript SDK provides type checking and IDE support
+5. **Type Safety**: Go SDK provides type checking and IDE support
+6. **No Node.js Required**: Pure Go implementation with minimal dependencies
 
 ## GitHub Actions Integration
 

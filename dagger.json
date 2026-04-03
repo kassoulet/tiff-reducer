@@ -1,6 +1,8 @@
 {
-  "name": "tiff-reducer",
-  "sdk": "typescript",
-  "source": "ts",
-  "engineVersion": "v0.20.3"
+  "name": "libtiff-rs",
+  "engineVersion": "v0.20.3",
+  "sdk": {
+    "source": "go"
+  },
+  "source": "dagger"
 }

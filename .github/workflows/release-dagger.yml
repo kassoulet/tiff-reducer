@@ -19,9 +19,7 @@ jobs:
 
       - name: Build static binary with UPX
         run: |
-          cd dagger
-          npm install
-          dagger call build-with-upx export --path=../tiff-reducer
+          dagger call build-with-upx export --path=tiff-reducer
 
       - name: Show binary size
         run: |
