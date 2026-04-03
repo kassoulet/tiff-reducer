@@ -22,7 +22,7 @@ jobs:
 
     - name: Generate HTML Visual Test Report
       run: |
-        dagger call generate-html-report export --path=tests/report
+        dagger call generate-html-report --source . export --path=tests/report
 
     - name: Upload HTML Report
       if: github.event_name == 'push' && github.repository_owner == 'kassoulet'

@@ -19,7 +19,7 @@ jobs:
 
       - name: Build static binary with UPX
         run: |
-          dagger call build-with-upx export --path=tiff-reducer
+          dagger call build-with-upx --source . export --path=tiff-reducer
 
       - name: Show binary size
         run: |

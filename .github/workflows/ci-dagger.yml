@@ -22,7 +22,7 @@ jobs:
 
     - name: Run full CI pipeline
       run: |
-        dagger call ci
+        dagger call ci --source .
 
   html-report:
     name: HTML Visual Report
@@ -40,7 +40,7 @@ jobs:
 
     - name: Generate HTML Report
       run: |
-        dagger call generate-html-report export --path=tests/report
+        dagger call generate-html-report --source . export --path=tests/report
 
     - name: Upload Test Report
       uses: actions/upload-artifact@v4
