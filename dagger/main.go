@@ -114,7 +114,7 @@ func (m *LibtiffRs) GenerateHtmlReport(source *dagger.Directory) *dagger.Directo
 	return m.BuildRelease(source).
 		WithExec([]string{"pip3", "install", "--break-system-packages", "numpy", "pillow"}).
 		WithExec([]string{
-			"python3", "tests/generate_html_report.py",
+			"python3", "tests/generate_test_report.py",
 			"--input", "tests/images",
 			"--output", "tests/report",
 			"--binary", "./target/release/tiff-reducer",
