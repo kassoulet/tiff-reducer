@@ -219,6 +219,23 @@ fn main() -> Result<()> {
     }
 }
 
+fn compression_name(code: u16) -> &'static str {
+    match code {
+        COMPRESSION_NONE => "Uncompressed",
+        COMPRESSION_LZW => "LZW",
+        COMPRESSION_JPEG => "JPEG",
+        COMPRESSION_ADOBE_DEFLATE => "Deflate",
+        COMPRESSION_LZMA => "LZMA",
+        COMPRESSION_ZSTD => "Zstd",
+        COMPRESSION_WEBP => "WebP",
+        COMPRESSION_LERC => "LERC",
+        COMPRESSION_LERC_DEFLATE => "LERC-Deflate",
+        COMPRESSION_LERC_ZSTD => "LERC-Zstd",
+        COMPRESSION_JPEGXL => "JPEG-XL",
+        _ => "Unknown",
+    }
+}
+
 fn analyze_file(path: &Path) -> Result<()> {
     if !path.exists() {
         return Err(anyhow!("File not found: {:?}", path));
@@ -270,7 +287,11 @@ fn analyze_file(path: &Path) -> Result<()> {
                 _ => "Unknown",
             }
         );
-        println!("Compression Codec Code: {}", comp);
+        println!(
+            "Compression: {} ({})",
+            compression_name(comp),
+            comp
+        );
 
         TIFFClose(tif);
     }
