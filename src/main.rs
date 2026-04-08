@@ -116,6 +116,7 @@ enum CompressionFormat {
     LercDeflate,
     LercZstd,
     JpegXl,
+    Uncompressed,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -159,6 +160,7 @@ impl std::fmt::Display for CompressionFormat {
             CompressionFormat::LercDeflate => write!(f, "LERC-Deflate"),
             CompressionFormat::LercZstd => write!(f, "LERC-Zstd"),
             CompressionFormat::JpegXl => write!(f, "JPEG-XL"),
+            CompressionFormat::Uncompressed => write!(f, "Uncompressed"),
         }
     }
 }
@@ -177,6 +179,7 @@ impl CompressionFormat {
             CompressionFormat::LercDeflate => COMPRESSION_LERC_DEFLATE,
             CompressionFormat::LercZstd => COMPRESSION_LERC_ZSTD,
             CompressionFormat::JpegXl => COMPRESSION_JPEGXL,
+            CompressionFormat::Uncompressed => COMPRESSION_NONE,
         }
     }
 }
@@ -422,6 +425,7 @@ fn process_single_file(
 
     let formats = if extreme {
         vec![
+            CompressionFormat::Uncompressed,
             CompressionFormat::Zstd,
             CompressionFormat::Lzma,
             CompressionFormat::Deflate,
