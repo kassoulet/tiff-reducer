@@ -1,0 +1,41 @@
+name: Visual Tests (Dagger)
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  html-report:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Dagger CLI
+      run: |
+        curl -L https://dl.dagger.io/dagger/install.sh | sh
+        sudo mv bin/dagger /usr/local/bin/
+        dagger version
+
+    - name: Generate HTML Visual Test Report
+      run: |
+        dagger call generate-html-report --source . export --path=tests/report
+
+    - name: Upload HTML Report
+      if: github.event_name == 'push' && github.repository_owner == 'kassoulet'
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-report
+        path: tests/report/
+        retention-days: 7
+
+    - name: Upload test thumbnails
+      if: github.event_name == 'push' && github.repository_owner == 'kassoulet'
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-thumbnails
+        path: tests/report/thumbnails/
+        retention-days: 7
