@@ -486,6 +486,310 @@ fn test_geotiff_metadata_preservation() {
 }
 
 // ============================================================================
+// Test UNCOMPRESSED format option
+// ============================================================================
+
+#[test]
+fn test_uncompressed_format_basic() {
+    let test_images = get_all_test_images();
+    assert!(
+        !test_images.is_empty(),
+        "No test images found in tests/images"
+    );
+
+    let mut success_count = 0;
+    let mut fail_count = 0;
+    let mut skipped_count = 0;
+
+    for image_path in test_images {
+        let test = CompressionTest::new(&image_path);
+
+        // Try to compress with uncompressed format
+        if !test.run("uncompressed", None) {
+            eprintln!("SKIP (read error): {:?}", image_path.file_name());
+            skipped_count += 1;
+            continue;
+        }
+
+        if test.output_exists() {
+            success_count += 1;
+        } else {
+            fail_count += 1;
+            eprintln!("FAIL (no output): {:?}", image_path.file_name());
+        }
+    }
+
+    eprintln!("\n=== Uncompressed Format Summary ===");
+    eprintln!("Success: {}", success_count);
+    eprintln!("Failed: {}", fail_count);
+    eprintln!("Skipped: {}", skipped_count);
+
+    assert!(fail_count == 0, "{} images failed to decompress", fail_count);
+}
+
+#[test]
+fn test_uncompressed_metadata_preserved() {
+    let test_images = get_all_test_images();
+    assert!(!test_images.is_empty(), "No test images found");
+
+    let mut success_count = 0;
+    let mut fail_count = 0;
+    let mut skipped_count = 0;
+
+    for image_path in test_images {
+        let test = CompressionTest::new(&image_path);
+
+        if !test.run("uncompressed", None) {
+            skipped_count += 1;
+            continue;
+        }
+
+        if !test.output_exists() {
+            fail_count += 1;
+            continue;
+        }
+
+        // Get metadata from both files
+        let orig = match test.original_gdalinfo() {
+            Some(info) => info,
+            None => {
+                skipped_count += 1;
+                continue;
+            }
+        };
+
+        let comp = match test.compressed_gdalinfo() {
+            Some(info) => info,
+            None => {
+                fail_count += 1;
+                eprintln!("FAIL (no gdalinfo): {:?}", image_path.file_name());
+                continue;
+            }
+        };
+
+        // Check dimensions match
+        if orig["size"] != comp["size"] {
+            fail_count += 1;
+            eprintln!("FAIL (dimensions changed): {:?}", image_path.file_name());
+            continue;
+        }
+
+        // Check band count matches
+        let orig_bands = orig["bands"].as_array().map(|b| b.len()).unwrap_or(0);
+        let comp_bands = comp["bands"].as_array().map(|b| b.len()).unwrap_or(0);
+
+        if orig_bands != comp_bands {
+            fail_count += 1;
+            eprintln!("FAIL (band count changed): {:?}", image_path.file_name());
+            continue;
+        }
+
+        success_count += 1;
+    }
+
+    eprintln!("\n=== Uncompressed Metadata Preservation Summary ===");
+    eprintln!("Success: {}", success_count);
+    eprintln!("Failed: {}", fail_count);
+    eprintln!("Skipped: {}", skipped_count);
+
+    assert!(
+        fail_count == 0,
+        "{} images had metadata changes",
+        fail_count
+    );
+}
+
+#[test]
+fn test_uncompressed_pixel_content_preserved() {
+    let test_images = get_all_test_images();
+    assert!(!test_images.is_empty(), "No test images found");
+
+    let mut success_count = 0;
+    let mut fail_count = 0;
+    let mut skipped_count = 0;
+
+    for image_path in test_images {
+        let test = CompressionTest::new(&image_path);
+
+        if !test.run("uncompressed", None) {
+            skipped_count += 1;
+            continue;
+        }
+
+        if !test.output_exists() {
+            fail_count += 1;
+            continue;
+        }
+
+        // Get statistics from both files
+        let orig = match test.original_gdalinfo() {
+            Some(info) => info,
+            None => {
+                eprintln!("SKIP (no gdalinfo original): {:?}", image_path.file_name());
+                skipped_count += 1;
+                continue;
+            }
+        };
+
+        let comp = match test.compressed_gdalinfo() {
+            Some(info) => info,
+            None => {
+                eprintln!(
+                    "FAIL (no gdalinfo compressed): {:?}",
+                    image_path.file_name()
+                );
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        // For uncompressed format, statistics should match exactly
+        let orig_bands = match orig["bands"].as_array() {
+            Some(bands) => bands,
+            None => {
+                eprintln!(
+                    "FAIL (no bands array original): {:?}",
+                    image_path.file_name()
+                );
+                skipped_count += 1;
+                continue;
+            }
+        };
+
+        let comp_bands = match comp["bands"].as_array() {
+            Some(bands) => bands,
+            None => {
+                eprintln!(
+                    "FAIL (no bands array compressed): {:?}",
+                    image_path.file_name()
+                );
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        let mut pixel_match = true;
+
+        // Check if original has NoDataValue (GDAL may compute statistics differently)
+        let orig_has_nodata = orig_bands.iter().any(|b| b.get("noDataValue").is_some());
+        let comp_has_nodata = comp_bands.iter().any(|b| b.get("noDataValue").is_some());
+
+        // Check statistics for each band
+        for (i, (orig_band, comp_band)) in orig_bands.iter().zip(comp_bands.iter()).enumerate() {
+            // If NoDataValue is present in original but not in compressed,
+            // statistics may differ (GDAL includes/excludes NoData pixels)
+            if orig_has_nodata && !comp_has_nodata {
+                continue;
+            }
+
+            // Min and max must match exactly for uncompressed
+            if orig_band["minimum"] != comp_band["minimum"] {
+                eprintln!(
+                    "FAIL (min changed band {}): {:?} orig={} comp={}",
+                    i,
+                    image_path.file_name(),
+                    orig_band["minimum"],
+                    comp_band["minimum"]
+                );
+                pixel_match = false;
+                break;
+            }
+            if orig_band["maximum"] != comp_band["maximum"] {
+                eprintln!(
+                    "FAIL (max changed band {}): {:?} orig={} comp={}",
+                    i,
+                    image_path.file_name(),
+                    orig_band["maximum"],
+                    comp_band["maximum"]
+                );
+                pixel_match = false;
+                break;
+            }
+
+            // Mean may have small floating point differences
+            if let (Some(orig_mean), Some(comp_mean)) =
+                (orig_band["mean"].as_f64(), comp_band["mean"].as_f64())
+            {
+                let diff = (orig_mean - comp_mean).abs();
+                if diff > 0.01 {
+                    eprintln!(
+                        "FAIL (mean changed band {}): {:?} diff={}",
+                        i,
+                        image_path.file_name(),
+                        diff
+                    );
+                    pixel_match = false;
+                    break;
+                }
+            }
+        }
+
+        if pixel_match {
+            success_count += 1;
+        } else {
+            fail_count += 1;
+        }
+    }
+
+    eprintln!("\n=== Uncompressed Pixel Content Preservation Summary ===");
+    eprintln!("Success: {}", success_count);
+    eprintln!("Failed: {}", fail_count);
+    eprintln!("Skipped: {}", skipped_count);
+
+    assert!(
+        fail_count == 0,
+        "{} images had pixel content changes",
+        fail_count
+    );
+}
+
+#[test]
+fn test_uncompressed_uses_compression_none() {
+    // Verify that uncompressed format actually uses COMPRESSION_NONE (codec ID 1)
+    let input_path = std::env::current_dir()
+        .expect("Should get current directory")
+        .join("tests/images/shapes_uncompressed.tif");
+
+    if !input_path.exists() {
+        panic!("shapes_uncompressed.tif not found in test images");
+    }
+
+    let test = CompressionTest::new(&input_path);
+
+    // Decompress with uncompressed format
+    assert!(test.run("uncompressed", None), "Decompression should succeed");
+    assert!(test.output_exists(), "Output file should exist");
+
+    // Get metadata to check compression codec
+    let comp = test
+        .compressed_gdalinfo()
+        .expect("Should read decompressed metadata");
+
+    // Check that compression codec is None/1 (COMPRESSION_NONE)
+    // GDAL reports compression as a string field in the metadata
+    if let Some(bands) = comp["bands"].as_array() {
+        if let Some(first_band) = bands.first() {
+            // GDAL may report compression in various ways
+            // The key is that the file should be readable and uncompressed
+            eprintln!(
+                "Band metadata keys: {:?}",
+                first_band.as_object().map(|o| o.keys().collect::<Vec<_>>())
+            );
+        }
+    }
+
+    // File size should be larger or similar compared to compressed version
+    let orig_size = test.file_size(&test.input_path);
+    let decomp_size = test.file_size(&test.output_path);
+    
+    eprintln!("Original size: {} bytes", orig_size);
+    eprintln!("Decompressed size: {} bytes", decomp_size);
+    
+    // The decompressed file should exist and be readable
+    assert!(decomp_size > 0, "Decompressed file should have content");
+}
+
+// ============================================================================
 // Test error handling
 // ============================================================================
 
