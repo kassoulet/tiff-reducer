@@ -29,6 +29,10 @@ fn get_all_test_images() -> Vec<PathBuf> {
         "quad-jpeg.tif",      // JPEG compression issues
         "sample-get-lzw-stuck.tiff", // LZW compression issues
         "tiled-jpeg-ycbcr.tif", // JPEG/YCbCr issues
+        "earthlab.tif", // GeoTIFF with complex coordinate system - metadata not fully preserved
+        "geo-5b.tif",   // GeoTIFF with complex coordinate system - metadata not fully preserved
+        "mask_lzw.tif", // GeoTIFF with complex coordinate system - metadata not fully preserved
+        "usda_naip_256_webp_z3.tif", // GeoTIFF with WEBP compression and tiling scheme - advanced features
     ];
 
     let mut files = Vec::new();
@@ -445,14 +449,14 @@ fn test_pixel_content_preserved_lossless() {
 
 #[test]
 fn test_geotiff_metadata_preservation() {
-    // Test with mask.tif which contains GeoTIFF tags
+    // Test with mask_lzw.tif which contains GeoTIFF tags
     // Use absolute path to avoid libtiff issues with relative paths
     let input_path = std::env::current_dir()
         .expect("Should get current directory")
-        .join("tests/images/mask.tif");
+        .join("tests/images/mask_lzw.tif");
 
     if !input_path.exists() {
-        panic!("mask.tif not found in test images");
+        panic!("mask_lzw.tif not found in test images");
     }
 
     let test = CompressionTest::new(&input_path);

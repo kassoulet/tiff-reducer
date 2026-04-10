@@ -65,6 +65,9 @@ fn build_fully_static(out_dir: &Path, target: &str) {
     println!("cargo:warning=Building liblzma...");
     build_liblzma(out_dir, &manifest_dir, &lib_dir, &include_dir, target);
 
+    println!("cargo:warning=Building libwebp...");
+    build_libwebp(out_dir, &manifest_dir, &lib_dir, &include_dir, target);
+
     println!("cargo:warning=Building libtiff...");
     build_libtiff(out_dir, &manifest_dir, &lib_dir, &include_dir, target);
 
@@ -77,6 +80,8 @@ fn build_fully_static(out_dir: &Path, target: &str) {
     println!("cargo:rustc-link-lib=static=jpeg");
     println!("cargo:rustc-link-lib=static=zstd");
     println!("cargo:rustc-link-lib=static=lzma");
+    println!("cargo:rustc-link-lib=static=webp");
+    println!("cargo:rustc-link-lib=static=sharpyuv");
 }
 
 fn clone_or_use(out_dir: &Path, manifest_dir: &Path, name: &str, url: &str, tag: &str) -> PathBuf {
@@ -284,6 +289,43 @@ fn build_liblzma(
     cfg.build();
 }
 
+fn build_libwebp(
+    out_dir: &Path,
+    manifest_dir: &Path,
+    _lib_dir: &Path,
+    _include_dir: &Path,
+    target: &str,
+) {
+    let source_dir = clone_or_use(
+        out_dir,
+        manifest_dir,
+        "libwebp",
+        "https://chromium.googlesource.com/webm/libwebp",
+        "v1.5.0",
+    );
+
+    let mut cfg = cmake::Config::new(&source_dir);
+    cfg.define("BUILD_SHARED_LIBS", "OFF")
+        .define("WEBP_BUILD_ANIM_UTILS", "OFF")
+        .define("WEBP_BUILD_CWEBP", "OFF")
+        .define("WEBP_BUILD_DWEBP", "OFF")
+        .define("WEBP_BUILD_GIF2WEBP", "OFF")
+        .define("WEBP_BUILD_IMG2WEBP", "OFF")
+        .define("WEBP_BUILD_VWEBP", "OFF")
+        .define("WEBP_BUILD_WEBPINFO", "OFF")
+        .define("WEBP_BUILD_WEBPMUX", "OFF")
+        .define("WEBP_BUILD_EXTRAS", "OFF")
+        .define("WEBP_BUILD_WEBP_JS", "OFF")
+        .define("CMAKE_INSTALL_LIBDIR", "lib")
+        .define("CMAKE_INSTALL_INCLUDEDIR", "include");
+
+    if target.contains("musl") {
+        cfg.cflag("-static");
+    }
+
+    cfg.build();
+}
+
 fn build_libtiff(
     out_dir: &Path,
     manifest_dir: &Path,
@@ -306,7 +348,7 @@ fn build_libtiff(
         .define("tiff-docs", "OFF")
         .define("BUILD_SHARED_LIBS", "OFF")
         .define("jbig", "OFF")
-        .define("webp", "OFF")
+        .define("webp", "ON")
         .define("lerc", "OFF")
         .define("lzma", "ON")
         .define("zlib", "ON")
@@ -321,6 +363,15 @@ fn build_libtiff(
         .define(
             "JPEG_LIBRARY",
             lib_dir.join("libjpeg.a").display().to_string(),
+        )
+        .define("WEBP_INCLUDE_DIR", include_dir.display().to_string())
+        .define(
+            "WEBP_LIBRARY",
+            lib_dir.join("libwebp.a").display().to_string(),
+        )
+        .define(
+            "SHARPYUV_LIBRARY",
+            lib_dir.join("libsharpyuv.a").display().to_string(),
         )
         .define("CMAKE_PREFIX_PATH", out_dir.display().to_string())
         .define("CMAKE_INSTALL_LIBDIR", "lib")
