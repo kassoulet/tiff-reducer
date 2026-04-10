@@ -7,7 +7,7 @@ A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency
 > One single executable, no dependencies, no configuration files. No need to install any additional software. No need to configure anything. 
 
 ### Compression
-- **Multiple Codecs**: Zstd, LZMA, Deflate, LZW, JPEG, WebP, LERC (with variants)
+- **Multiple Codecs**: Zstd, LZMA, Deflate, LZW, JPEG, WebP, LERC, **Uncompressed**
 - **Compression Levels**: Zstd (1-22), Deflate/LZMA (1-9), JPEG/WebP (1-100)
 - **Predictors**: None, Horizontal, Floating Point (for float32 data)
 - **Extreme Mode**: Benchmarks all formats to find the smallest file size
@@ -28,7 +28,7 @@ A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency
 - **Quantization**: Convert float32/int16 to uint8
 
 ### Testing & Quality
-- **Rust Integration Tests**: 6/6 passing (compression, metadata, error handling)
+- **Rust Integration Tests**: 10/10 passing (compression, metadata, error handling, uncompressed format)
 - **Visual Regression**: GDAL-based pixel statistics comparison
 - **Fuzz Testing**: 18 malformed file scenarios for error handling
 - **Benchmark Mode**: `--benchmark` flag for timing/throughput metrics
@@ -70,6 +70,11 @@ tiff-reducer compress ./input_folder --output ./output_folder --jobs 4
 ```bash
 tiff-reducer compress input.tif --output optimized.tif --format lerc
 tiff-reducer compress input.tif --output optimized.tif --format lerc-zstd
+```
+
+### Decompress to Uncompressed TIFF
+```bash
+tiff-reducer compress compressed.tif --output decompressed.tif --format uncompressed
 ```
 
 ### Analyze Metadata
@@ -210,7 +215,7 @@ cat tests/report/README.md
 
 ### `compress`
 - `-o, --output <PATH>`: Specify output file or directory.
-- `-f, --format <FORMAT>`: Manually choose format (`zstd`, `lzma`, `lzw`, `deflate`, `jpeg`, `webp`, `lerc`, `lerc-deflate`, `lerc-zstd`, `jpeg-xl`).
+- `-f, --format <FORMAT>`: Manually choose format (`zstd`, `lzma`, `lzw`, `deflate`, `jpeg`, `webp`, `lerc`, `lerc-deflate`, `lerc-zstd`, `jpeg-xl`, `uncompressed`).
 - `-l, --level <LEVEL>`: Compression level (Zstd: 1-22, Deflate/LZMA: 1-9, JPEG/WebP: 1-100).
 - `--extreme`: Try all formats and pick the winner.
 - `--quantize`: Convert to 8-bit uint.
