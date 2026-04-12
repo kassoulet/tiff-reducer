@@ -5,53 +5,35 @@ on:
     tags:
       - 'v*'
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  build-static:
+  build:
+    name: Build & Test
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Install UPX
-        run: sudo apt-get install -y upx-ucl
+    - name: Install Rust toolchain
+      run: |
+        rustup toolchain install stable --profile minimal
 
-      - name: Build static binary via Docker
-        run: docker build -f Dockerfile.static -t tiff-reducer-static .
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake gdal-bin
 
-      - name: Extract binary
-        run: |
-          docker rm -f temp-tiff-reducer 2>/dev/null || true
-          docker create --name temp-tiff-reducer tiff-reducer-static
-          docker cp temp-tiff-reducer:/tiff-reducer ./tiff-reducer
-          docker rm temp-tiff-reducer
+    - name: Run full test suite
+      run: ./scripts/run-tests.sh
 
-      - name: Compress with UPX
-        run: |
-          echo "Binary size before UPX:"
-          ls -lh ./tiff-reducer
-          upx --best --lzma ./tiff-reducer
-          echo "Binary size after UPX:"
-          ls -lh ./tiff-reducer
+    - name: Build release binary
+      run: cargo build --release
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tiff-reducer-static
-          path: ./tiff-reducer
-
-      - name: Create Release
-        id: create_release
-        uses: softprops/action-gh-release@v1
-        with:
-          draft: false
-          prerelease: false
-          files: ./tiff-reducer
-
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./tiff-reducer
-          asset_name: tiff-reducer-linux-x64
-          asset_content_type: application/octet-stream
+    - name: Upload binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: tiff-reducer
+        path: target/release/tiff-reducer
+        retention-days: 7

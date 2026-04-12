@@ -8,7 +8,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  test:
+    name: Build & Test
     runs-on: ubuntu-latest
 
     steps:
@@ -16,74 +17,74 @@ jobs:
 
     - name: Install Rust toolchain
       run: |
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        rustup toolchain install stable --profile minimal
+        rustup component add clippy rustfmt
 
-    - name: Install dependencies
+    - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libtiff-dev libzstd-dev liblzma-dev libjpeg-dev libwebp-dev libdeflate-dev libgeotiff-dev
+        sudo apt-get install -y cmake gdal-bin
 
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --release
 
-    - name: Test UPX compression (optional)
-      run: |
-        if command -v upx &> /dev/null; then
-          echo "UPX available, testing compression..."
-          cp ./target/debug/tiff-reducer ./tiff-reducer-upx-test
-          upx --best --lzma ./tiff-reducer-upx-test
-          echo "UPX compression successful"
-          rm ./tiff-reducer-upx-test
-        else
-          echo "UPX not available, skipping compression test"
-        fi
+    - name: Run full integration tests
+      run: cargo test --test integration_tests -- --test-threads=1
 
-    - name: Run error handling tests
-      run: cargo test --test integration_tests handling --verbose
-
-    - name: Check format
+    - name: Check formatting
       run: cargo fmt -- --check
 
     - name: Clippy
       run: cargo clippy -- -D warnings
 
+    - name: Generate test report
+      run: |
+        cargo run --bin test-report --release --quiet -- \
+          --format zstd \
+          --level 19 \
+          --limit 20 \
+          --output tests/README.md
+
+    - name: Upload test report
+      if: github.event_name == 'push'
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-report
+        path: tests/README.md
+        retention-days: 7
+
   html-report:
-    name: HTML Visual Report
+    name: Visual Test Report
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.repository_owner == 'kassoulet'
+    if: false  # Disabled until we add visual report support
+    needs: test
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Install Rust toolchain
       run: |
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        rustup toolchain install stable --profile minimal
 
-    - name: Install dependencies
+    - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libtiff-dev libzstd-dev liblzma-dev libjpeg-dev libwebp-dev libdeflate-dev libgeotiff-dev \
-          python3 python3-pip python3-gdal gdal-bin libgdal-dev
-
-    - name: Install Python dependencies
-      run: |
-        pip3 install --break-system-packages numpy pillow
+        sudo apt-get install -y cmake gdal-bin
 
     - name: Build release binary
       run: cargo build --release
 
-    - name: Generate Markdown Test Report
+    - name: Generate sample test report
       run: |
-        ./tests/generate-report.sh \
+        cargo run --bin test-report --release --quiet -- \
           --format zstd \
           --level 19 \
-          --number 20
+          --limit 20 \
+          --output tests/README-sample.md
 
     - name: Upload Test Report
       uses: actions/upload-artifact@v4
       with:
-        name: test-report
-        path: tests/report/
+        name: test-report-sample
+        path: tests/README-sample.md
         retention-days: 7
