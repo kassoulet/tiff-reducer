@@ -288,11 +288,7 @@ fn analyze_file(path: &Path) -> Result<()> {
                 _ => "Unknown",
             }
         );
-        println!(
-            "Compression: {} ({})",
-            compression_name(comp),
-            comp
-        );
+        println!("Compression: {} ({})", compression_name(comp), comp);
 
         TIFFClose(tif);
     }

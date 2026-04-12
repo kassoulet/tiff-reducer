@@ -1,5 +1,5 @@
 /target
-bin/
+/bin/
 .qwen/
 QWEN.md
 index.html
@@ -8,3 +8,4 @@ test-results.txt
 tests/report/
 tests/images/*.tif
 tests/images/*.tif
+

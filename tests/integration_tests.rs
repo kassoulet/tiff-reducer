@@ -21,23 +21,24 @@ fn get_all_test_images() -> Vec<PathBuf> {
 
     // Known problematic test files that should be skipped
     let skip_files = [
-        "smallliz.tif",       // OJPEG compression - legacy format
-        "text.tif",           // THUNDERSCAN compression - obsolete format
-        "ycbcr-cat.tif",      // YCbCr with subsampling - crash
-        "zackthecat.tif",     // OJPEG + YCbCr - crash
-        "quad-tile.jpg.tiff", // Tiled JPEG + YCbCr - crash
-        "quad-jpeg.tif",      // JPEG compression issues
+        "smallliz.tif",              // OJPEG compression - legacy format
+        "text.tif",                  // THUNDERSCAN compression - obsolete format
+        "ycbcr-cat.tif",             // YCbCr with subsampling - crash
+        "zackthecat.tif",            // OJPEG + YCbCr - crash
+        "quad-tile.jpg.tiff",        // Tiled JPEG + YCbCr - crash
+        "quad-jpeg.tif",             // JPEG compression issues
         "sample-get-lzw-stuck.tiff", // LZW compression issues
-        "tiled-jpeg-ycbcr.tif", // JPEG/YCbCr issues
+        "tiled-jpeg-ycbcr.tif",      // JPEG/YCbCr issues
     ];
 
     let mut files = Vec::new();
     if let Ok(entries) = fs::read_dir(&test_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().is_some_and(|ext| {
-                ext == "tif" || ext == "tiff" || ext == "TIF" || ext == "TIFF"
-            }) {
+            if path
+                .extension()
+                .is_some_and(|ext| ext == "tif" || ext == "tiff" || ext == "TIF" || ext == "TIFF")
+            {
                 if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                     if skip_files.contains(&filename) {
                         continue;
@@ -156,10 +157,9 @@ fn test_single_image_comprehensive(image_path: &Path) -> ImageTestResult {
                     == comp["bands"].as_array().map(|b| b.len()).unwrap_or(0);
 
             // Check pixel content
-            if let (Some(orig_bands), Some(comp_bands)) = (
-                orig["bands"].as_array(),
-                comp["bands"].as_array(),
-            ) {
+            if let (Some(orig_bands), Some(comp_bands)) =
+                (orig["bands"].as_array(), comp["bands"].as_array())
+            {
                 let orig_has_nodata = orig_bands.iter().any(|b| b.get("noDataValue").is_some());
                 let comp_has_nodata = comp_bands.iter().any(|b| b.get("noDataValue").is_some());
 
@@ -188,19 +188,19 @@ fn test_single_image_comprehensive(image_path: &Path) -> ImageTestResult {
                     == comp["bands"].as_array().map(|b| b.len()).unwrap_or(0);
 
             // Check pixel content
-            if let (Some(orig_bands), Some(comp_bands)) = (
-                orig["bands"].as_array(),
-                comp["bands"].as_array(),
-            ) {
+            if let (Some(orig_bands), Some(comp_bands)) =
+                (orig["bands"].as_array(), comp["bands"].as_array())
+            {
                 let orig_has_nodata = orig_bands.iter().any(|b| b.get("noDataValue").is_some());
                 let comp_has_nodata = comp_bands.iter().any(|b| b.get("noDataValue").is_some());
 
-                result.uncompressed_pixel_ok = orig_bands.iter().zip(comp_bands.iter()).all(|(ob, cb)| {
-                    if orig_has_nodata && !comp_has_nodata {
-                        return true;
-                    }
-                    ob["minimum"] == cb["minimum"] && ob["maximum"] == cb["maximum"]
-                });
+                result.uncompressed_pixel_ok =
+                    orig_bands.iter().zip(comp_bands.iter()).all(|(ob, cb)| {
+                        if orig_has_nodata && !comp_has_nodata {
+                            return true;
+                        }
+                        ob["minimum"] == cb["minimum"] && ob["maximum"] == cb["maximum"]
+                    });
             }
         }
     }
@@ -229,12 +229,24 @@ fn test_all_images_comprehensive() {
         let result = test_single_image_comprehensive(image_path);
         total += 1;
 
-        if result.zstd_success { zstd_success += 1; }
-        if result.uncompressed_success { uncompressed_success += 1; }
-        if result.zstd_metadata_ok { zstd_metadata_ok += 1; }
-        if result.uncompressed_metadata_ok { uncompressed_metadata_ok += 1; }
-        if result.zstd_pixel_ok { zstd_pixel_ok += 1; }
-        if result.uncompressed_pixel_ok { uncompressed_pixel_ok += 1; }
+        if result.zstd_success {
+            zstd_success += 1;
+        }
+        if result.uncompressed_success {
+            uncompressed_success += 1;
+        }
+        if result.zstd_metadata_ok {
+            zstd_metadata_ok += 1;
+        }
+        if result.uncompressed_metadata_ok {
+            uncompressed_metadata_ok += 1;
+        }
+        if result.zstd_pixel_ok {
+            zstd_pixel_ok += 1;
+        }
+        if result.uncompressed_pixel_ok {
+            uncompressed_pixel_ok += 1;
+        }
     }
 
     eprintln!("\n=== Comprehensive Test Summary (All Images) ===");
@@ -242,16 +254,46 @@ fn test_all_images_comprehensive() {
     eprintln!("Zstd compression success: {}/{}", zstd_success, total);
     eprintln!("Uncompressed success: {}/{}", uncompressed_success, total);
     eprintln!("Zstd metadata preserved: {}/{}", zstd_metadata_ok, total);
-    eprintln!("Uncompressed metadata preserved: {}/{}", uncompressed_metadata_ok, total);
+    eprintln!(
+        "Uncompressed metadata preserved: {}/{}",
+        uncompressed_metadata_ok, total
+    );
     eprintln!("Zstd pixel content preserved: {}/{}", zstd_pixel_ok, total);
-    eprintln!("Uncompressed pixel content preserved: {}/{}", uncompressed_pixel_ok, total);
+    eprintln!(
+        "Uncompressed pixel content preserved: {}/{}",
+        uncompressed_pixel_ok, total
+    );
 
-    assert!(zstd_success == total, "{} images failed zstd compression", total - zstd_success);
-    assert!(uncompressed_success == total, "{} images failed uncompressed", total - uncompressed_success);
-    assert!(zstd_metadata_ok == total, "{} images had zstd metadata changes", total - zstd_metadata_ok);
-    assert!(uncompressed_metadata_ok == total, "{} images had uncompressed metadata changes", total - uncompressed_metadata_ok);
-    assert!(zstd_pixel_ok == total, "{} images had zstd pixel changes", total - zstd_pixel_ok);
-    assert!(uncompressed_pixel_ok == total, "{} images had uncompressed pixel changes", total - uncompressed_pixel_ok);
+    assert!(
+        zstd_success == total,
+        "{} images failed zstd compression",
+        total - zstd_success
+    );
+    assert!(
+        uncompressed_success == total,
+        "{} images failed uncompressed",
+        total - uncompressed_success
+    );
+    assert!(
+        zstd_metadata_ok == total,
+        "{} images had zstd metadata changes",
+        total - zstd_metadata_ok
+    );
+    assert!(
+        uncompressed_metadata_ok == total,
+        "{} images had uncompressed metadata changes",
+        total - uncompressed_metadata_ok
+    );
+    assert!(
+        zstd_pixel_ok == total,
+        "{} images had zstd pixel changes",
+        total - zstd_pixel_ok
+    );
+    assert!(
+        uncompressed_pixel_ok == total,
+        "{} images had uncompressed pixel changes",
+        total - uncompressed_pixel_ok
+    );
 }
 
 // ============================================================================
@@ -319,10 +361,17 @@ fn test_geotiff_metadata_preservation() {
     let test = CompressionTest::new(&input_path);
 
     // Test with Zstd
-    assert!(test.run("zstd", Some(19)), "Zstd compression should succeed");
+    assert!(
+        test.run("zstd", Some(19)),
+        "Zstd compression should succeed"
+    );
 
-    let orig = test.get_gdalinfo(&test.input_path).expect("Should read original metadata");
-    let comp = test.get_gdalinfo(&test.output_path).expect("Should read compressed metadata");
+    let orig = test
+        .get_gdalinfo(&test.input_path)
+        .expect("Should read original metadata");
+    let comp = test
+        .get_gdalinfo(&test.output_path)
+        .expect("Should read compressed metadata");
 
     assert_eq!(orig["size"], comp["size"], "Dimensions should match");
 
@@ -418,7 +467,10 @@ fn test_multiple_input_files_zstd() {
         .arg("19");
 
     let result = cmd.output().expect("Failed to run command");
-    assert!(result.status.success(), "Should handle multiple input files with zstd");
+    assert!(
+        result.status.success(),
+        "Should handle multiple input files with zstd"
+    );
 }
 
 #[test]
@@ -442,5 +494,89 @@ fn test_multiple_input_files_uncompressed() {
         .arg("uncompressed");
 
     let result = cmd.output().expect("Failed to run command");
-    assert!(result.status.success(), "Should handle multiple input files with uncompressed");
+    assert!(
+        result.status.success(),
+        "Should handle multiple input files with uncompressed"
+    );
+}
+
+// ============================================================================
+// Test CLI functionality
+// ============================================================================
+
+#[test]
+fn test_cli_help() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"))
+        .arg("--help")
+        .output()
+        .expect("Failed to run command");
+
+    assert!(output.status.success(), "Help should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("compress"),
+        "Help should mention compress command"
+    );
+    assert!(
+        stdout.contains("analyze"),
+        "Help should mention analyze command"
+    );
+}
+
+#[test]
+fn test_output_directory_creation() {
+    let test_images = get_all_test_images();
+    if test_images.is_empty() {
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let output_dir = temp_dir.path().join("nested").join("output");
+    // Don't create the directory - let the tool create it
+
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
+    cmd.arg("compress")
+        .arg(&test_images[0])
+        .arg("-o")
+        .arg(&output_dir)
+        .arg("-f")
+        .arg("zstd")
+        .arg("-l")
+        .arg("19");
+
+    let result = cmd.output().expect("Failed to run command");
+    assert!(
+        result.status.success(),
+        "Should create output directory and compress"
+    );
+}
+
+#[test]
+fn test_dry_run_mode() {
+    let test_images = get_all_test_images();
+    if test_images.is_empty() {
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let output_path = temp_dir.path().join("output.tif");
+
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
+    cmd.arg("compress")
+        .arg(&test_images[0])
+        .arg("-o")
+        .arg(&output_path)
+        .arg("-f")
+        .arg("zstd")
+        .arg("-l")
+        .arg("19")
+        .arg("--dry-run");
+
+    let result = cmd.output().expect("Failed to run command");
+    assert!(result.status.success(), "Dry run should succeed");
+    // In dry-run mode, output file should not be created
+    assert!(
+        !output_path.exists(),
+        "Dry run should not create output file"
+    );
 }

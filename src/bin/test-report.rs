@@ -1,5 +1,5 @@
 //! Test report generator for tiff-reducer
-//! 
+//!
 //! This binary runs compression tests on all TIFF images and generates
 //! a Markdown report at tests/README.md
 
@@ -71,9 +71,10 @@ fn get_test_images(limit: Option<usize>) -> Vec<PathBuf> {
     if let Ok(entries) = fs::read_dir(&test_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().is_some_and(|ext| {
-                ext == "tif" || ext == "tiff" || ext == "TIF" || ext == "TIFF"
-            }) {
+            if path
+                .extension()
+                .is_some_and(|ext| ext == "tif" || ext == "tiff" || ext == "TIF" || ext == "TIFF")
+            {
                 if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                     if skip_files.contains(&filename) {
                         continue;
@@ -85,21 +86,16 @@ fn get_test_images(limit: Option<usize>) -> Vec<PathBuf> {
     }
 
     files.sort();
-    
+
     if let Some(n) = limit {
         files.truncate(n);
     }
-    
+
     files
 }
 
 /// Test compression of a single file
-fn test_compression(
-    input_path: &Path,
-    binary_path: &Path,
-    format: &str,
-    level: u32,
-) -> TestResult {
+fn test_compression(input_path: &Path, binary_path: &Path, format: &str, level: u32) -> TestResult {
     let name = input_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -127,8 +123,8 @@ fn test_compression(
 
     let success = match cmd.output() {
         Ok(output) => {
-            output.status.success() 
-                && output_path.exists() 
+            output.status.success()
+                && output_path.exists()
                 && output_path.metadata().map(|m| m.len()).unwrap_or(0) > 0
         }
         Err(_) => false,
@@ -166,10 +162,7 @@ fn generate_report(summary: &ReportSummary, output_path: &Path, format: &str, le
         "**Generated:** {}\n",
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
     ));
-    report.push_str(&format!(
-        "**Format:** {} (level {})\n\n",
-        format, level
-    ));
+    report.push_str(&format!("**Format:** {} (level {})\n\n", format, level));
 
     // Summary table
     report.push_str("## Summary\n\n");
@@ -193,7 +186,10 @@ fn generate_report(summary: &ReportSummary, output_path: &Path, format: &str, le
             0.0
         }
     ));
-    report.push_str(&format!("| **Total** | **{}** | **100%** |\n\n", summary.total));
+    report.push_str(&format!(
+        "| **Total** | **{}** | **100%** |\n\n",
+        summary.total
+    ));
 
     // Performance stats
     let total_sec = summary.total_duration_ms as f64 / 1000.0;
@@ -300,7 +296,10 @@ fn main() {
     };
 
     if !binary_path.exists() {
-        eprintln!("Error: Binary not found at {}. Run: cargo build --release", binary_path.display());
+        eprintln!(
+            "Error: Binary not found at {}. Run: cargo build --release",
+            binary_path.display()
+        );
         std::process::exit(1);
     }
 
@@ -352,8 +351,26 @@ fn main() {
     println!("\n{}", "=".repeat(60));
     println!("SUMMARY");
     println!("{}", "=".repeat(60));
-    println!("Working:     {}/{} ({:.1}%)", summary.success, summary.total, if summary.total > 0 { summary.success as f64 / summary.total as f64 * 100.0 } else { 0.0 });
-    println!("Failed:      {}/{} ({:.1}%)", summary.failed, summary.total, if summary.total > 0 { summary.failed as f64 / summary.total as f64 * 100.0 } else { 0.0 });
+    println!(
+        "Working:     {}/{} ({:.1}%)",
+        summary.success,
+        summary.total,
+        if summary.total > 0 {
+            summary.success as f64 / summary.total as f64 * 100.0
+        } else {
+            0.0
+        }
+    );
+    println!(
+        "Failed:      {}/{} ({:.1}%)",
+        summary.failed,
+        summary.total,
+        if summary.total > 0 {
+            summary.failed as f64 / summary.total as f64 * 100.0
+        } else {
+            0.0
+        }
+    );
     println!(
         "Total time:  {:.2}s",
         summary.total_duration_ms as f64 / 1000.0
