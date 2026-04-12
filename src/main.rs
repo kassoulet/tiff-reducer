@@ -62,8 +62,9 @@ struct Cli {
 enum Commands {
     /// Compress one or more TIFF files
     Compress {
-        /// Input file or directory
-        input: PathBuf,
+        /// Input file(s) or directory
+        #[arg(required = true)]
+        input: Vec<PathBuf>,
 
         /// Output file or directory (overwrites input if omitted)
         #[arg(short, long)]
@@ -300,7 +301,7 @@ fn analyze_file(path: &Path) -> Result<()> {
 
 #[allow(clippy::too_many_arguments)]
 fn compress_command(
-    input: PathBuf,
+    input: Vec<PathBuf>,
     output: Option<PathBuf>,
     format: CompressionFormat,
     level: Option<u32>,
@@ -310,18 +311,33 @@ fn compress_command(
     benchmark: bool,
     jobs: Option<usize>,
 ) -> Result<()> {
-    let files = if input.is_dir() {
-        fs::read_dir(&input)?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| {
-                p.extension()
-                    .is_some_and(|ext| ext == "tif" || ext == "tiff")
-            })
-            .collect::<Vec<_>>()
-    } else {
-        vec![input]
-    };
+    // Collect all files from input paths (files and directories)
+    let files: Vec<PathBuf> = input
+        .iter()
+        .flat_map(|path| {
+            if path.is_dir() {
+                fs::read_dir(path)
+                    .ok()
+                    .map(|entries| {
+                        entries
+                            .filter_map(|e| e.ok())
+                            .map(|e| e.path())
+                            .filter(|p| {
+                                p.extension()
+                                    .is_some_and(|ext| ext == "tif" || ext == "tiff")
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            } else {
+                vec![path.clone()]
+            }
+        })
+        .collect();
+
+    if files.is_empty() {
+        return Err(anyhow!("No TIFF files found in the specified input paths"));
+    }
 
     let m = MultiProgress::new();
 

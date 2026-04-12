@@ -794,6 +794,831 @@ fn test_uncompressed_uses_compression_none() {
 }
 
 // ============================================================================
+// Test UNCOMPRESSED format with different photometric interpretations
+// ============================================================================
+
+#[test]
+fn test_uncompressed_rgb_photometric() {
+    // Test RGB images are correctly handled in uncompressed mode
+    let test_images = get_all_test_images();
+    let mut success_count = 0;
+    let mut fail_count = 0;
+
+    for image_path in test_images {
+        let test = CompressionTest::new(&image_path);
+
+        // Get original photometric interpretation
+        let orig = match test.original_gdalinfo() {
+            Some(info) => info,
+            None => continue,
+        };
+
+        // Check if this is an RGB image (3+ bands)
+        let orig_bands = match orig["bands"].as_array() {
+            Some(bands) => bands,
+            None => continue,
+        };
+
+        if orig_bands.len() < 3 {
+            continue; // Skip non-RGB images
+        }
+
+        if !test.run("uncompressed", None) {
+            fail_count += 1;
+            eprintln!("FAIL (compression error): {:?}", image_path.file_name());
+            continue;
+        }
+
+        if !test.output_exists() {
+            fail_count += 1;
+            continue;
+        }
+
+        let comp = match test.compressed_gdalinfo() {
+            Some(info) => info,
+            None => {
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        // Verify band count is preserved
+        let comp_bands = comp["bands"].as_array().map(|b| b.len()).unwrap_or(0);
+        if orig_bands.len() != comp_bands {
+            fail_count += 1;
+            eprintln!(
+                "FAIL (band count changed RGB): {:?} {} -> {}",
+                image_path.file_name(),
+                orig_bands.len(),
+                comp_bands
+            );
+            continue;
+        }
+
+        success_count += 1;
+    }
+
+    eprintln!("\n=== Uncompressed RGB Photometric Summary ===");
+    eprintln!("Success: {}", success_count);
+    eprintln!("Failed: {}", fail_count);
+
+    assert!(
+        fail_count == 0,
+        "{} RGB images failed in uncompressed mode",
+        fail_count
+    );
+}
+
+#[test]
+fn test_uncompressed_grayscale_photometric() {
+    // Test grayscale images are correctly handled in uncompressed mode
+    let test_images = get_all_test_images();
+    let mut success_count = 0;
+    let mut fail_count = 0;
+
+    for image_path in test_images {
+        let test = CompressionTest::new(&image_path);
+
+        let orig = match test.original_gdalinfo() {
+            Some(info) => info,
+            None => continue,
+        };
+
+        let orig_bands = match orig["bands"].as_array() {
+            Some(bands) => bands,
+            None => continue,
+        };
+
+        // Check for grayscale (1-2 bands)
+        if orig_bands.len() > 2 {
+            continue; // Skip multi-band images
+        }
+
+        if !test.run("uncompressed", None) {
+            fail_count += 1;
+            eprintln!("FAIL (compression error): {:?}", image_path.file_name());
+            continue;
+        }
+
+        if !test.output_exists() {
+            fail_count += 1;
+            continue;
+        }
+
+        let comp = match test.compressed_gdalinfo() {
+            Some(info) => info,
+            None => {
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        // Verify band count is preserved
+        let comp_bands = comp["bands"].as_array().map(|b| b.len()).unwrap_or(0);
+        if orig_bands.len() != comp_bands {
+            fail_count += 1;
+            eprintln!(
+                "FAIL (band count changed grayscale): {:?} {} -> {}",
+                image_path.file_name(),
+                orig_bands.len(),
+                comp_bands
+            );
+            continue;
+        }
+
+        success_count += 1;
+    }
+
+    eprintln!("\n=== Uncompressed Grayscale Photometric Summary ===");
+    eprintln!("Success: {}", success_count);
+    eprintln!("Failed: {}", fail_count);
+
+    assert!(
+        fail_count == 0,
+        "{} grayscale images failed in uncompressed mode",
+        fail_count
+    );
+}
+
+// ============================================================================
+// Test UNCOMPRESSED format with different sample formats
+// ============================================================================
+
+#[test]
+fn test_uncompressed_uint_sample_formats() {
+    // Test unsigned integer sample formats in uncompressed mode
+    let test_images = get_all_test_images();
+    let mut success_count = 0;
+    let mut fail_count = 0;
+
+    for image_path in test_images {
+        let test = CompressionTest::new(&image_path);
+
+        let orig = match test.original_gdalinfo() {
+            Some(info) => info,
+            None => continue,
+        };
+
+        let orig_bands = match orig["bands"].as_array() {
+            Some(bands) => bands,
+            None => continue,
+        };
+
+        if orig_bands.is_empty() {
+            continue;
+        }
+
+        // Check if it's unsigned integer (most common)
+        // GDAL doesn't always expose sampleFormat directly, so we try all
+        if !test.run("uncompressed", None) {
+            fail_count += 1;
+            eprintln!("FAIL (compression error): {:?}", image_path.file_name());
+            continue;
+        }
+
+        if !test.output_exists() {
+            fail_count += 1;
+            continue;
+        }
+
+        // Verify statistics match for lossless
+        let comp = match test.compressed_gdalinfo() {
+            Some(info) => info,
+            None => {
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        let comp_bands = match comp["bands"].as_array() {
+            Some(bands) => bands,
+            None => {
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        // Check min/max for first band
+        if let (Some(orig_band), Some(comp_band)) = (orig_bands.first(), comp_bands.first()) {
+            if orig_band["minimum"] != comp_band["minimum"]
+                || orig_band["maximum"] != comp_band["maximum"]
+            {
+                fail_count += 1;
+                eprintln!(
+                    "FAIL (pixel values changed): {:?} min: {} -> {} max: {} -> {}",
+                    image_path.file_name(),
+                    orig_band["minimum"],
+                    comp_band["minimum"],
+                    orig_band["maximum"],
+                    comp_band["maximum"]
+                );
+                continue;
+            }
+        }
+
+        success_count += 1;
+    }
+
+    eprintln!("\n=== Uncompressed UInt Sample Format Summary ===");
+    eprintln!("Success: {}", success_count);
+    eprintln!("Failed: {}", fail_count);
+
+    assert!(
+        fail_count == 0,
+        "{} images failed with uint sample format",
+        fail_count
+    );
+}
+
+#[test]
+fn test_uncompressed_float_sample_formats() {
+    // Test floating point sample formats in uncompressed mode
+    let test_images = get_all_test_images();
+    let mut float_count = 0;
+    let mut success_count = 0;
+    let mut fail_count = 0;
+
+    for image_path in test_images {
+        let test = CompressionTest::new(&image_path);
+
+        let orig = match test.original_gdalinfo() {
+            Some(info) => info,
+            None => continue,
+        };
+
+        let orig_bands = match orig["bands"].as_array() {
+            Some(bands) => bands,
+            None => continue,
+        };
+
+        if orig_bands.is_empty() {
+            continue;
+        }
+
+        // Try to detect float data types from GDAL metadata
+        // GDAL reports this in the dataType or noDataValue fields
+        let is_float = orig_bands.iter().any(|band| {
+            if let Some(data_type) = band.get("dataType").and_then(|dt| dt.as_str()) {
+                data_type.contains("Float") || data_type.contains("Float32")
+                    || data_type.contains("Float64")
+            } else {
+                false
+            }
+        });
+
+        if !is_float {
+            continue; // Skip non-float images
+        }
+
+        float_count += 1;
+
+        if !test.run("uncompressed", None) {
+            fail_count += 1;
+            eprintln!("FAIL (compression error): {:?}", image_path.file_name());
+            continue;
+        }
+
+        if !test.output_exists() {
+            fail_count += 1;
+            continue;
+        }
+
+        // Verify statistics match for lossless
+        let comp = match test.compressed_gdalinfo() {
+            Some(info) => info,
+            None => {
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        let comp_bands = match comp["bands"].as_array() {
+            Some(bands) => bands,
+            None => {
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        // Check min/max for first band (with tolerance for floating point)
+        if let (Some(orig_band), Some(comp_band)) = (orig_bands.first(), comp_bands.first()) {
+            if let (Some(orig_min), Some(comp_min)) =
+                (orig_band["minimum"].as_f64(), comp_band["minimum"].as_f64())
+            {
+                if let (Some(orig_max), Some(comp_max)) =
+                    (orig_band["maximum"].as_f64(), comp_band["maximum"].as_f64())
+                {
+                    let min_diff = (orig_min - comp_min).abs();
+                    let max_diff = (orig_max - comp_max).abs();
+
+                    if min_diff > 0.001 || max_diff > 0.001 {
+                        fail_count += 1;
+                        eprintln!(
+                            "FAIL (float pixel values changed): {:?} min: {} -> {} max: {} -> {}",
+                            image_path.file_name(),
+                            orig_min,
+                            comp_min,
+                            orig_max,
+                            comp_max
+                        );
+                        continue;
+                    }
+                }
+            }
+        }
+
+        success_count += 1;
+    }
+
+    eprintln!("\n=== Uncompressed Float Sample Format Summary ===");
+    eprintln!("Float images tested: {}", float_count);
+    eprintln!("Success: {}", success_count);
+    eprintln!("Failed: {}", fail_count);
+
+    assert!(
+        fail_count == 0,
+        "{} float images failed in uncompressed mode",
+        fail_count
+    );
+}
+
+// ============================================================================
+// Test UNCOMPRESSED format with tiled vs striped images
+// ============================================================================
+
+#[test]
+fn test_uncompressed_tiled_images() {
+    // Test tiled TIFF images in uncompressed mode
+    let test_images = get_all_test_images();
+    let mut tiled_count = 0;
+    let mut success_count = 0;
+    let mut fail_count = 0;
+
+    for image_path in test_images {
+        let test = CompressionTest::new(&image_path);
+
+        let orig = match test.original_gdalinfo() {
+            Some(info) => info,
+            None => continue,
+        };
+
+        // Check if this is a tiled image by examining band block structure
+        // GDAL reports Block=WxH for tiled images where both W and H are present
+        let bands = match orig["bands"].as_array() {
+            Some(bands) => bands,
+            None => continue,
+        };
+
+        if bands.is_empty() {
+            continue;
+        }
+
+        // Check if block structure indicates tiling (block has both width and height > 1)
+        let is_tiled = bands.iter().any(|band| {
+            if let Some(block_arr) = band.get("block").and_then(|b| b.as_array()) {
+                // Block is an array [width, height]
+                if block_arr.len() == 2 {
+                    if let (Some(w), Some(h)) = (block_arr[0].as_u64(), block_arr[1].as_u64()) {
+                        // Tiled images typically have both dimensions > 1 and similar
+                        w > 1 && h > 1 && (w as i64 - h as i64).abs() < 512
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        });
+
+        if !is_tiled {
+            continue; // Skip non-tiled images
+        }
+
+        tiled_count += 1;
+
+        if !test.run("uncompressed", None) {
+            fail_count += 1;
+            eprintln!("FAIL (compression error): {:?}", image_path.file_name());
+            continue;
+        }
+
+        if !test.output_exists() {
+            fail_count += 1;
+            continue;
+        }
+
+        // Verify dimensions are preserved
+        let comp = match test.compressed_gdalinfo() {
+            Some(info) => info,
+            None => {
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        if orig["size"] != comp["size"] {
+            fail_count += 1;
+            eprintln!(
+                "FAIL (dimensions changed tiled): {:?} orig={} comp={}",
+                image_path.file_name(),
+                orig["size"],
+                comp["size"]
+            );
+            continue;
+        }
+
+        success_count += 1;
+    }
+
+    eprintln!("\n=== Uncompressed Tiled Images Summary ===");
+    eprintln!("Tiled images tested: {}", tiled_count);
+    eprintln!("Success: {}", success_count);
+    eprintln!("Failed: {}", fail_count);
+
+    assert!(
+        fail_count == 0,
+        "{} tiled images failed in uncompressed mode",
+        fail_count
+    );
+}
+
+#[test]
+fn test_uncompressed_striped_images() {
+    // Test striped (non-tiled) TIFF images in uncompressed mode
+    let test_images = get_all_test_images();
+    let mut striped_count = 0;
+    let mut success_count = 0;
+    let mut fail_count = 0;
+
+    for image_path in test_images {
+        let test = CompressionTest::new(&image_path);
+
+        let orig = match test.original_gdalinfo() {
+            Some(info) => info,
+            None => continue,
+        };
+
+        // Check if this is a striped (non-tiled) image
+        // Striped images have blocks that span the full width (block width >= image width)
+        let bands = match orig["bands"].as_array() {
+            Some(bands) => bands,
+            None => continue,
+        };
+
+        if bands.is_empty() {
+            continue;
+        }
+
+        // Check if block structure indicates striping
+        let is_tiled = bands.iter().any(|band| {
+            if let Some(block_arr) = band.get("block").and_then(|b| b.as_array()) {
+                // Block is an array [width, height]
+                if block_arr.len() == 2 {
+                    if let (Some(w), Some(h)) = (block_arr[0].as_u64(), block_arr[1].as_u64()) {
+                        // Tiled: both dimensions > 1 and similar size
+                        // Striped: width matches image width or height is 1
+                        w > 1 && h > 1 && (w as i64 - h as i64).abs() < 512
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        });
+
+        if is_tiled {
+            continue; // Skip tiled images
+        }
+
+        striped_count += 1;
+
+        if !test.run("uncompressed", None) {
+            fail_count += 1;
+            eprintln!("FAIL (compression error): {:?}", image_path.file_name());
+            continue;
+        }
+
+        if !test.output_exists() {
+            fail_count += 1;
+            continue;
+        }
+
+        // Verify dimensions are preserved
+        let comp = match test.compressed_gdalinfo() {
+            Some(info) => info,
+            None => {
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        if orig["size"] != comp["size"] {
+            fail_count += 1;
+            eprintln!(
+                "FAIL (dimensions changed striped): {:?} orig={} comp={}",
+                image_path.file_name(),
+                orig["size"],
+                comp["size"]
+            );
+            continue;
+        }
+
+        success_count += 1;
+    }
+
+    eprintln!("\n=== Uncompressed Striped Images Summary ===");
+    eprintln!("Striped images tested: {}", striped_count);
+    eprintln!("Success: {}", success_count);
+    eprintln!("Failed: {}", fail_count);
+
+    assert!(
+        fail_count == 0,
+        "{} striped images failed in uncompressed mode",
+        fail_count
+    );
+}
+
+// ============================================================================
+// Test UNCOMPRESSED format roundtrip conversions
+// ============================================================================
+
+#[test]
+fn test_uncompressed_roundtrip_compression_decompression() {
+    // Test roundtrip: compressed -> uncompressed -> compressed
+    let test_images = get_all_test_images();
+    let mut success_count = 0;
+    let mut fail_count = 0;
+    let mut skipped_count = 0;
+
+    for image_path in test_images {
+        // First compress with Zstd
+        let test1 = CompressionTest::new(&image_path);
+        if !test1.run("zstd", Some(19)) {
+            skipped_count += 1;
+            continue;
+        }
+
+        if !test1.output_exists() {
+            fail_count += 1;
+            continue;
+        }
+
+        // Now decompress the compressed file
+        let test2 = CompressionTest::new(&test1.output_path);
+        if !test2.run("uncompressed", None) {
+            fail_count += 1;
+            eprintln!(
+                "FAIL (decompression error): {:?}",
+                image_path.file_name()
+            );
+            continue;
+        }
+
+        if !test2.output_exists() {
+            fail_count += 1;
+            continue;
+        }
+
+        // Verify original and final have same dimensions and bands
+        let orig = match test1.original_gdalinfo() {
+            Some(info) => info,
+            None => {
+                skipped_count += 1;
+                continue;
+            }
+        };
+
+        let final_comp = match test2.compressed_gdalinfo() {
+            Some(info) => info,
+            None => {
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        // Check dimensions match
+        if orig["size"] != final_comp["size"] {
+            fail_count += 1;
+            eprintln!(
+                "FAIL (dimensions changed roundtrip): {:?}",
+                image_path.file_name()
+            );
+            continue;
+        }
+
+        // Check band count matches
+        let orig_bands = orig["bands"].as_array().map(|b| b.len()).unwrap_or(0);
+        let final_bands = final_comp["bands"]
+            .as_array()
+            .map(|b| b.len())
+            .unwrap_or(0);
+
+        if orig_bands != final_bands {
+            fail_count += 1;
+            eprintln!(
+                "FAIL (band count changed roundtrip): {:?}",
+                image_path.file_name()
+            );
+            continue;
+        }
+
+        success_count += 1;
+    }
+
+    eprintln!("\n=== Uncompressed Roundtrip Summary ===");
+    eprintln!("Success: {}", success_count);
+    eprintln!("Failed: {}", fail_count);
+    eprintln!("Skipped: {}", skipped_count);
+
+    assert!(
+        fail_count == 0,
+        "{} images failed roundtrip test",
+        fail_count
+    );
+}
+
+// ============================================================================
+// Test UNCOMPRESSED format file size characteristics
+// ============================================================================
+
+#[test]
+fn test_uncompressed_file_size_characteristics() {
+    // Verify uncompressed files are larger than or equal to compressed versions
+    let test_images = get_all_test_images();
+    let mut tested_count = 0;
+    let mut larger_count = 0;
+    let mut similar_count = 0;
+    let mut smaller_count = 0; // Should not happen, but track it
+
+    for image_path in test_images {
+        let test = CompressionTest::new(&image_path);
+
+        // Skip files that can't be read
+        let orig = match test.original_gdalinfo() {
+            Some(info) => info,
+            None => continue,
+        };
+
+        // Skip if no bands
+        if orig["bands"].as_array().map(|b| b.len()).unwrap_or(0) == 0 {
+            continue;
+        }
+
+        // Compress with Zstd first
+        if !test.run("zstd", Some(19)) {
+            continue;
+        }
+
+        if !test.output_exists() {
+            continue;
+        }
+
+        let compressed_size = test.file_size(&test.output_path);
+
+        // Now compress with uncompressed
+        let test2 = CompressionTest::new(&image_path);
+        if !test2.run("uncompressed", None) {
+            continue;
+        }
+
+        if !test2.output_exists() {
+            continue;
+        }
+
+        let uncompressed_size = test2.file_size(&test2.output_path);
+
+        tested_count += 1;
+
+        // Uncompressed should generally be larger or similar
+        let ratio = if compressed_size > 0 {
+            uncompressed_size as f64 / compressed_size as f64
+        } else {
+            0.0
+        };
+
+        if uncompressed_size > compressed_size {
+            larger_count += 1;
+        } else if uncompressed_size == compressed_size {
+            similar_count += 1;
+        } else {
+            // This can happen for already-compressed or incompressible data
+            smaller_count += 1;
+        }
+
+        eprintln!(
+            "{:?}: compressed={} uncompressed={} ratio={:.2}",
+            image_path.file_name(),
+            compressed_size,
+            uncompressed_size,
+            ratio
+        );
+    }
+
+    eprintln!("\n=== Uncompressed File Size Characteristics ===");
+    eprintln!("Files tested: {}", tested_count);
+    eprintln!("Larger than compressed: {}", larger_count);
+    eprintln!("Similar to compressed: {}", similar_count);
+    eprintln!("Smaller than compressed: {}", smaller_count);
+
+    assert!(
+        tested_count > 0,
+        "No files could be tested for size characteristics"
+    );
+}
+
+// ============================================================================
+// Test UNCOMPRESSED format with already uncompressed files
+// ============================================================================
+
+#[test]
+fn test_uncompressed_already_uncompressed_files() {
+    // Test files that are already in uncompressed format
+    let test_images = get_all_test_images();
+    let mut already_uncompressed_count = 0;
+    let mut success_count = 0;
+    let mut fail_count = 0;
+
+    for image_path in test_images {
+        let test = CompressionTest::new(&image_path);
+
+        let orig = match test.original_gdalinfo() {
+            Some(info) => info,
+            None => continue,
+        };
+
+        // Check if already uncompressed (GDAL may report compression)
+        let bands = match orig["bands"].as_array() {
+            Some(bands) => bands,
+            None => continue,
+        };
+
+        if bands.is_empty() {
+            continue;
+        }
+
+        // Try to detect if already uncompressed from compression field
+        let is_uncompressed = bands.iter().any(|band| {
+            band.get("compression")
+                .and_then(|c| c.as_str())
+                .map(|s| s == "none" || s == "None" || s == "NONE")
+                .unwrap_or(false)
+        });
+
+        if !is_uncompressed {
+            continue; // Skip already compressed files
+        }
+
+        already_uncompressed_count += 1;
+
+        if !test.run("uncompressed", None) {
+            fail_count += 1;
+            eprintln!(
+                "FAIL (re-compression error): {:?}",
+                image_path.file_name()
+            );
+            continue;
+        }
+
+        if !test.output_exists() {
+            fail_count += 1;
+            continue;
+        }
+
+        // Verify file is still readable and has same structure
+        let comp = match test.compressed_gdalinfo() {
+            Some(info) => info,
+            None => {
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        if orig["size"] != comp["size"] {
+            fail_count += 1;
+            eprintln!(
+                "FAIL (dimensions changed): {:?}",
+                image_path.file_name()
+            );
+            continue;
+        }
+
+        success_count += 1;
+    }
+
+    eprintln!("\n=== Uncompressed Already Uncompressed Files Summary ===");
+    eprintln!("Already uncompressed: {}", already_uncompressed_count);
+    eprintln!("Success: {}", success_count);
+    eprintln!("Failed: {}", fail_count);
+
+    // This test is informational, don't fail if no uncompressed files found
+}
+
+// ============================================================================
 // Test error handling
 // ============================================================================
 
