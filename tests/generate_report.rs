@@ -71,7 +71,7 @@ fn get_test_images(limit: Option<usize>) -> Vec<PathBuf> {
     if let Ok(entries) = fs::read_dir(&test_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| {
+            if path.extension().is_some_and(|ext| {
                 ext == "tif" || ext == "tiff" || ext == "TIF" || ext == "TIFF"
             }) {
                 if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
