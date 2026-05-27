@@ -1,11 +1,8 @@
 # Development dependencies for tiff-reducer
 # Install with: pip install -r requirements-dev.txt
 
-# Code formatting
-black>=24.0.0
-
-# Linting
-pylint>=3.0.0
+# Linting and formatting
+ruff>=0.4.0
 
 # Testing dependencies (for Python test scripts)
 # Note: NumPy <2.0 required for GDAL compatibility
