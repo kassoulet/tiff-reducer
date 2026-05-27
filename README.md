@@ -242,20 +242,20 @@ This project uses GitHub Actions for continuous integration and testing.
 - Uploads markdown report and thumbnails as CI artifacts (7-day retention)
 - View artifacts from GitHub Actions run page
 
-### Pre-commit Hooks
+### Prek Hooks
 
-This project uses [pre-commit](https://pre-commit.com/) to enforce code quality standards.
+This project uses [prek](https://github.com/j178/prek), a high-performance Rust-based pre-commit framework, to enforce code quality standards.
 
 **Setup:**
 ```bash
-# Install pre-commit
-pip install pre-commit
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install Python development dependencies
-pip install -r requirements-dev.txt
+# Install prek
+uv tool install prek
 
 # Install git hooks
-pre-commit install
+prek install
 ```
 
 **Hooks configured:**
@@ -268,7 +268,7 @@ pre-commit install
 
 **Manual run:**
 ```bash
-pre-commit run --all-files
+prek run --all-files
 ```
 
 ## License

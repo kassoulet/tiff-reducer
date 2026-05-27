@@ -192,9 +192,9 @@ pub unsafe fn copy_gdal_tags(_src: *mut TIFF, _dst: *mut TIFF) -> Result<()> {
 /// Must be called after TIFFOpen and before any GeoTIFF tag operations.
 pub unsafe fn register_geotiff_tags(tif: *mut TIFF) {
     use crate::ffi::{
-        FIELD_CUSTOM, TIFF_ASCII, TIFF_DOUBLE, TIFF_SHORT, TIFF_VARIABLE2,
-        TIFFTAG_GEODOUBLEPARAMSTAG, TIFFTAG_GEOASCIIPARAMSTAG, TIFFTAG_GEOKEYDIRECTORYTAG,
-        TIFFTAG_MODELPIXELSCALETAG, TIFFTAG_MODELTIEPOINTTAG, TIFFFieldInfo, TIFFMergeFieldInfo,
+        TIFFFieldInfo, TIFFMergeFieldInfo, FIELD_CUSTOM, TIFFTAG_GEOASCIIPARAMSTAG,
+        TIFFTAG_GEODOUBLEPARAMSTAG, TIFFTAG_GEOKEYDIRECTORYTAG, TIFFTAG_MODELPIXELSCALETAG,
+        TIFFTAG_MODELTIEPOINTTAG, TIFF_ASCII, TIFF_DOUBLE, TIFF_SHORT, TIFF_VARIABLE2,
     };
 
     struct SyncFieldInfo([TIFFFieldInfo; 5]);
@@ -253,7 +253,11 @@ pub unsafe fn register_geotiff_tags(tif: *mut TIFF) {
         },
     ]);
 
-    TIFFMergeFieldInfo(tif, GEOTIFF_FIELDS.0.as_ptr(), GEOTIFF_FIELDS.0.len() as i32);
+    TIFFMergeFieldInfo(
+        tif,
+        GEOTIFF_FIELDS.0.as_ptr(),
+        GEOTIFF_FIELDS.0.len() as i32,
+    );
 }
 
 /// Public FFI version - registers GeoTIFF tags for reading/writing

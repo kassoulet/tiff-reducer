@@ -25,17 +25,20 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y git cmake make g++ gdal-bin
 
+    - name: Install uv and prek
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        uv tool install prek
+
+    - name: Run prek hooks
+      run: prek run --all-files
+
     - name: Build
       run: cargo build --release
 
     - name: Run full integration tests
       run: cargo test --test integration_tests -- --test-threads=1
-
-    - name: Check formatting
-      run: cargo fmt -- --check
-
-    - name: Clippy
-      run: cargo clippy -- -D warnings
 
     - name: Generate test report
       run: |

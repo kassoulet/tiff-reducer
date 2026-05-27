@@ -11,7 +11,7 @@ pub struct TIFFFieldInfo {
     pub field_tag: u32,
     pub field_readcount: i16,
     pub field_writecount: i16,
-    pub field_type: i32,    // TIFFDataType enum = int in C
+    pub field_type: i32, // TIFFDataType enum = int in C
     pub field_bit: u16,
     pub field_oktochange: u8,
     pub field_passcount: u8,

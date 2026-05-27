@@ -15,6 +15,7 @@ from datetime import datetime
 
 try:
     from PIL import Image
+
     HAS_PILLOW = True
 except ImportError:
     HAS_PILLOW = False
@@ -49,10 +50,7 @@ def get_tiffinfo(filepath):
     """Get TIFF metadata using tiffinfo."""
     try:
         result = subprocess.run(
-            ['tiffinfo', str(filepath)],
-            capture_output=True,
-            text=True,
-            timeout=10
+            ["tiffinfo", str(filepath)], capture_output=True, text=True, timeout=10
         )
         return result.stdout if result.returncode == 0 else ""
     except Exception:
@@ -71,7 +69,7 @@ def format_file_size(size_bytes):
     """Format file size in human-readable format."""
     if size_bytes == 0:
         return "0 B"
-    for unit in ['B', 'KB', 'MB', 'GB']:
+    for unit in ["B", "KB", "MB", "GB"]:
         if size_bytes < 1024.0:
             return f"{size_bytes:.1f} {unit}"
         size_bytes /= 1024.0
@@ -90,31 +88,33 @@ def test_image(binary_path, input_path, output_dir, fmt, level):
                     str(binary_path),
                     str(input_path),
                     str(output_file),
-                    '--format', fmt,
-                    '--level', str(level),
-                    '--quiet'
+                    "--format",
+                    fmt,
+                    "--level",
+                    str(level),
+                    "--quiet",
                 ],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
 
             if result.returncode != 0:
                 return {
-                    'status': 'failed',
-                    'error': result.stderr.strip() or f"Exit code: {result.returncode}",
-                    'output_size': 0,
-                    'original_size': get_file_size(input_path),
-                    'compression_ratio': 0
+                    "status": "failed",
+                    "error": result.stderr.strip() or f"Exit code: {result.returncode}",
+                    "output_size": 0,
+                    "original_size": get_file_size(input_path),
+                    "compression_ratio": 0,
                 }
 
             if not output_file.exists():
                 return {
-                    'status': 'failed',
-                    'error': 'Output file not created',
-                    'output_size': 0,
-                    'original_size': get_file_size(input_path),
-                    'compression_ratio': 0
+                    "status": "failed",
+                    "error": "Output file not created",
+                    "output_size": 0,
+                    "original_size": get_file_size(input_path),
+                    "compression_ratio": 0,
                 }
 
             output_size = get_file_size(output_file)
@@ -122,28 +122,28 @@ def test_image(binary_path, input_path, output_dir, fmt, level):
             ratio = (1 - output_size / original_size) * 100 if original_size > 0 else 0
 
             return {
-                'status': 'success',
-                'error': None,
-                'output_size': output_size,
-                'original_size': original_size,
-                'compression_ratio': ratio
+                "status": "success",
+                "error": None,
+                "output_size": output_size,
+                "original_size": original_size,
+                "compression_ratio": ratio,
             }
 
         except subprocess.TimeoutExpired:
             return {
-                'status': 'failed',
-                'error': 'Timeout (60s)',
-                'output_size': 0,
-                'original_size': get_file_size(input_path),
-                'compression_ratio': 0
+                "status": "failed",
+                "error": "Timeout (60s)",
+                "output_size": 0,
+                "original_size": get_file_size(input_path),
+                "compression_ratio": 0,
             }
         except Exception as e:
             return {
-                'status': 'failed',
-                'error': str(e),
-                'output_size': 0,
-                'original_size': get_file_size(input_path),
-                'compression_ratio': 0
+                "status": "failed",
+                "error": str(e),
+                "output_size": 0,
+                "original_size": get_file_size(input_path),
+                "compression_ratio": 0,
             }
 
 
@@ -155,22 +155,25 @@ def generate_html_report(results, output_dir, fmt, level):
     thumbnails_dir.mkdir(exist_ok=True)
 
     total = len(results)
-    passed = sum(1 for r in results if r['status'] == 'success')
+    passed = sum(1 for r in results if r["status"] == "success")
     failed = total - passed
     pass_rate = (passed / total * 100) if total > 0 else 0
 
     avg_compression = 0
     if passed > 0:
-        avg_compression = sum(r['compression_ratio'] for r in results if r['status'] == 'success') / passed
+        avg_compression = (
+            sum(r["compression_ratio"] for r in results if r["status"] == "success")
+            / passed
+        )
 
     # Categorize errors
     error_categories = {}
     for r in results:
-        if r['status'] == 'failed' and r['error']:
-            error_type = r['error'].split(':')[0].split('(')[0].strip()
+        if r["status"] == "failed" and r["error"]:
+            error_type = r["error"].split(":")[0].split("(")[0].strip()
             error_categories[error_type] = error_categories.get(error_type, 0) + 1
 
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -402,7 +405,9 @@ def generate_html_report(results, output_dir, fmt, level):
             <h2>Error Breakdown</h2>
             <ul class="error-list">
 """
-        for error_type, count in sorted(error_categories.items(), key=lambda x: x[1], reverse=True):
+        for error_type, count in sorted(
+            error_categories.items(), key=lambda x: x[1], reverse=True
+        ):
             html_content += f"""                <li>
                     <span class="error-type">{html.escape(error_type)}</span>
                     <span class="error-count">{count} image(s)</span>
@@ -420,14 +425,14 @@ def generate_html_report(results, output_dir, fmt, level):
 """
 
     for r in results:
-        thumbnail_path = r.get('thumbnail_path', '')
-        filename = html.escape(r['filename'])
-        original_size = format_file_size(r['original_size'])
-        status_class = 'success' if r['status'] == 'success' else 'failed'
-        status_text = 'Success' if r['status'] == 'success' else 'Failed'
+        thumbnail_path = r.get("thumbnail_path", "")
+        filename = html.escape(r["filename"])
+        original_size = format_file_size(r["original_size"])
+        status_class = "success" if r["status"] == "success" else "failed"
+        status_text = "Success" if r["status"] == "success" else "Failed"
 
-        if r['status'] == 'success':
-            output_size = format_file_size(r['output_size'])
+        if r["status"] == "success":
+            output_size = format_file_size(r["output_size"])
             compression = f"{r['compression_ratio']:.1f}%"
             stats_html = f"""                <div class="stats">
                     <span>{original_size} → {output_size}</span>
@@ -441,7 +446,7 @@ def generate_html_report(results, output_dir, fmt, level):
 """
 
         error_html = ""
-        if r['status'] == 'failed' and r['error']:
+        if r["status"] == "failed" and r["error"]:
             error_html = f"""                <div class="error-message">{html.escape(r['error'])}</div>
 """
 
@@ -450,7 +455,9 @@ def generate_html_report(results, output_dir, fmt, level):
             rel_thumbnail = os.path.relpath(thumbnail_path, output_dir)
             thumbnail_html = f'                <img src="{html.escape(rel_thumbnail)}" alt="{filename}">\n'
         else:
-            thumbnail_html = '                <div class="no-thumbnail">No preview</div>\n'
+            thumbnail_html = (
+                '                <div class="no-thumbnail">No preview</div>\n'
+            )
 
         html_content += f"""                <div class="image-card {status_class}">
 {thumbnail_html}                    <div class="card-content">
@@ -473,7 +480,7 @@ def generate_html_report(results, output_dir, fmt, level):
 
     # Write HTML report
     html_file = output_path / "report.html"
-    with open(html_file, 'w') as f:
+    with open(html_file, "w") as f:
         f.write(html_content)
 
     # Write README.md redirect
@@ -483,20 +490,30 @@ View the HTML report: [report.html](report.html)
 
 Generated: {now}
 """
-    with open(output_path / "README.md", 'w') as f:
+    with open(output_path / "README.md", "w") as f:
         f.write(readme_content)
 
     return str(html_file)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Generate HTML test report for tiff-reducer')
-    parser.add_argument('--input', required=True, help='Input directory with test images')
-    parser.add_argument('--output', required=True, help='Output directory for report')
-    parser.add_argument('--binary', required=True, help='Path to tiff-reducer binary')
-    parser.add_argument('--format', default='zstd', help='Compression format (default: zstd)')
-    parser.add_argument('--level', type=int, default=19, help='Compression level (default: 19)')
-    parser.add_argument('--limit', type=int, default=None, help='Limit number of test images')
+    parser = argparse.ArgumentParser(
+        description="Generate HTML test report for tiff-reducer"
+    )
+    parser.add_argument(
+        "--input", required=True, help="Input directory with test images"
+    )
+    parser.add_argument("--output", required=True, help="Output directory for report")
+    parser.add_argument("--binary", required=True, help="Path to tiff-reducer binary")
+    parser.add_argument(
+        "--format", default="zstd", help="Compression format (default: zstd)"
+    )
+    parser.add_argument(
+        "--level", type=int, default=19, help="Compression level (default: 19)"
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None, help="Limit number of test images"
+    )
     args = parser.parse_args()
 
     input_dir = Path(args.input)
@@ -510,9 +527,9 @@ def main():
         return 1
 
     # Collect test images
-    tiff_files = sorted(input_dir.glob('*.tif')) + sorted(input_dir.glob('*.tiff'))
+    tiff_files = sorted(input_dir.glob("*.tif")) + sorted(input_dir.glob("*.tiff"))
     if args.limit:
-        tiff_files = tiff_files[:args.limit]
+        tiff_files = tiff_files[: args.limit]
 
     if not tiff_files:
         print("No test images found")
@@ -522,18 +539,26 @@ def main():
 
     results = []
     for i, tiff_file in enumerate(tiff_files, 1):
-        print(f"[{i}/{len(tiff_files)}] Testing {tiff_file.name}...", end=' ', flush=True)
+        print(
+            f"[{i}/{len(tiff_files)}] Testing {tiff_file.name}...", end=" ", flush=True
+        )
 
-        result = test_image(str(binary_path), str(tiff_file), args.output, args.format, args.level)
-        result['filename'] = tiff_file.name
+        result = test_image(
+            str(binary_path), str(tiff_file), args.output, args.format, args.level
+        )
+        result["filename"] = tiff_file.name
 
         # Create thumbnail
         thumbnail_path = Path(args.output) / "thumbnails" / f"{tiff_file.stem}.png"
         if create_thumbnail(str(tiff_file), str(thumbnail_path)):
-            result['thumbnail_path'] = str(thumbnail_path)
+            result["thumbnail_path"] = str(thumbnail_path)
 
-        status_icon = '✓' if result['status'] == 'success' else '✗'
-        print(f"{status_icon} {result['compression_ratio']:.1f}%" if result['status'] == 'success' else f"{status_icon} {result['error']}")
+        status_icon = "✓" if result["status"] == "success" else "✗"
+        print(
+            f"{status_icon} {result['compression_ratio']:.1f}%"
+            if result["status"] == "success"
+            else f"{status_icon} {result['error']}"
+        )
 
         results.append(result)
 
@@ -541,12 +566,12 @@ def main():
     html_file = generate_html_report(results, args.output, args.format, args.level)
     print(f"\nReport generated: {html_file}")
 
-    passed = sum(1 for r in results if r['status'] == 'success')
+    passed = sum(1 for r in results if r["status"] == "success")
     failed = len(results) - passed
     print(f"Results: {passed} passed, {failed} failed")
 
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     exit(main())
