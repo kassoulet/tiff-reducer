@@ -7,7 +7,6 @@ Outputs a Markdown report.
 
 import subprocess
 import tempfile
-import os
 import argparse
 from pathlib import Path
 from datetime import datetime
@@ -352,7 +351,7 @@ def generate_report(results, all_images, output_dir):
 
     # Also print summary
     print(f"\n{'='*60}")
-    print(f"SUMMARY")
+    print("SUMMARY")
     print(f"{'='*60}")
     print(f"Working:     {working}/{total} ({working/total*100:.1f}%)")
     print(f"Failed:      {failed}/{total} ({failed/total*100:.1f}%)")
