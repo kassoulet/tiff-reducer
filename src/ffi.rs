@@ -5,19 +5,17 @@ use libc::{c_char, c_int, c_void};
 #[allow(clippy::upper_case_acronyms)]
 pub enum TIFF {}
 
+// Matches libtiff 4.x TIFFFieldInfo struct exactly (see tiffio.h)
 #[repr(C)]
 pub struct TIFFFieldInfo {
     pub field_tag: u32,
-    pub field_readcount: i16,    // short in libtiff
-    pub field_writecount: i16,   // short in libtiff
-    pub field_type: u16,         // TIFFDataType is unsigned short
-    pub field_anonymous: u32,    // added to match libtiff structure
-    pub set_get_field_type: u16, // TIFFSetGetFieldType is enum (unsigned short)
-    pub field_bit: u16,          // unsigned short in libtiff
-    pub field_oktochange: u8,    // unsigned char in libtiff
-    pub field_passcount: u8,     // unsigned char in libtiff
+    pub field_readcount: i16,
+    pub field_writecount: i16,
+    pub field_type: i32,    // TIFFDataType enum = int in C
+    pub field_bit: u16,
+    pub field_oktochange: u8,
+    pub field_passcount: u8,
     pub field_name: *const c_char,
-    pub field_subfields: *mut c_void, // TIFFFieldArray* - must be NULL for simple tags
 }
 
 #[link(name = "tiff")]
@@ -71,12 +69,6 @@ extern "C" {
     pub fn TIFFWriteTile(tif: *mut TIFF, buf: *mut c_void, x: u32, y: u32, z: u16, s: u16) -> i32;
 }
 
-// GeoTIFF tag initialization from libgeotiff
-#[link(name = "geotiff")]
-extern "C" {
-    pub fn XTIFFInitialize();
-}
-
 // Suppress libtiff warnings
 pub unsafe fn suppress_warnings() {
     TIFFSetWarningHandler(None);
@@ -126,10 +118,17 @@ pub const TIFFTAG_GEOASCIIPARAMSTAG: u32 = 34737;
 pub const TIFFTAG_TILEWIDTH: u32 = 322;
 pub const TIFFTAG_TILELENGTH: u32 = 323;
 
-// TIFF data types for field registration
-pub const TIFF_TYPE_DOUBLE: u16 = 12;
-pub const TIFF_TYPE_SHORT: u16 = 3;
-pub const TIFF_TYPE_ASCII: u16 = 2;
+// TIFFDataType constants (int values matching the C enum)
+pub const TIFF_ASCII: i32 = 2;
+pub const TIFF_SHORT: i32 = 3;
+pub const TIFF_DOUBLE: i32 = 12;
+
+// TIFF_VARIABLE: marker for variable-length tags (pass count + pointer)
+pub const TIFF_VARIABLE: i16 = -1;
+pub const TIFF_VARIABLE2: i16 = -3;
+
+// FIELD_CUSTOM: bit index for custom/extension tags
+pub const FIELD_CUSTOM: u16 = 65;
 
 // Compression types
 #[allow(dead_code)]

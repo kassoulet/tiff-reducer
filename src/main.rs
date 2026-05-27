@@ -186,13 +186,6 @@ impl CompressionFormat {
 }
 
 fn main() -> Result<()> {
-    // Initialize libgeotiff's extended TIFF tag support at program startup
-    // This registers all GeoTIFF tags (33550, 33922, 34735, 34736, 34737) with libtiff
-    // Must be called before any TIFF files are opened
-    unsafe {
-        crate::ffi::XTIFFInitialize();
-    }
-
     env_logger::init();
 
     // Suppress libtiff warnings for unknown tags (GeoTIFF tags)
@@ -652,9 +645,6 @@ fn run_compression_pass(
             return Err(anyhow!("Failed to open source TIFF"));
         }
 
-        // Register GeoTIFF tags on source for proper reading of GeoTIFF metadata
-        crate::metadata::register_geotiff_tags_ffi(tif_src);
-
         let tmp_path = output.with_extension("tmp_tiffreducer");
         let c_tmp = CString::new(
             tmp_path
@@ -673,8 +663,10 @@ fn run_compression_pass(
             return Err(anyhow!("Failed to open destination TIFF"));
         }
 
-        // Register GeoTIFF tags on destination for proper writing of GeoTIFF metadata
-        // This must be done BEFORE setting any other tags to avoid compression reset
+        // Register GeoTIFF tags on both source and destination handles.
+        // For the source, this ensures TIFFGetField knows the types for these tags.
+        // For the destination, it allows writing them correctly.
+        crate::metadata::register_geotiff_tags_ffi(tif_src);
         crate::metadata::register_geotiff_tags_ffi(tif_dst);
 
         let mut page = 0;

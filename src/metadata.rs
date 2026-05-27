@@ -4,13 +4,6 @@ use crate::ffi::*;
 use anyhow::{anyhow, Result};
 use libc::c_char;
 
-// Static GeoTIFF tag names (null-terminated)
-static MODELPIXELSCALE_NAME: &[u8] = b"ModelPixelScaleTag\0";
-static MODELTIEPOINT_NAME: &[u8] = b"ModelTiepointTag\0";
-static GEOKEYDIRECTORY_NAME: &[u8] = b"GeoKeyDirectoryTag\0";
-static GEODOUBLEPARAMS_NAME: &[u8] = b"GeoDoubleParamsTag\0";
-static GEOASCII_NAME: &[u8] = b"GeoAsciiParamsTag\0";
-
 /// Read and clone ALL metadata from source to destination
 /// This function clones all non-conflicting metadata.
 ///
@@ -233,12 +226,72 @@ pub unsafe fn copy_gdal_tags(_src: *mut TIFF, _dst: *mut TIFF) -> Result<()> {
     Ok(())
 }
 
-/// Registers GeoTIFF tags for reading/writing with libtiff
-/// Note: XTIFFInitialize() is called once at program startup to register all GeoTIFF tags
-/// GDAL tags (42112, 42113) are not supported yet - requires proper libtiff field info structure
-pub unsafe fn register_geotiff_tags(_tif: *mut TIFF) {
-    // GeoTIFF tags are registered globally by XTIFFInitialize()
-    // GDAL tags require manual registration but is disabled due to crashes
+/// Registers GeoTIFF tags for reading/writing with the vendored libtiff.
+/// Must be called after TIFFOpen and before any GeoTIFF tag operations.
+pub unsafe fn register_geotiff_tags(tif: *mut TIFF) {
+    use crate::ffi::{
+        FIELD_CUSTOM, TIFF_ASCII, TIFF_DOUBLE, TIFF_SHORT, TIFF_VARIABLE2,
+        TIFFTAG_GEODOUBLEPARAMSTAG, TIFFTAG_GEOASCIIPARAMSTAG, TIFFTAG_GEOKEYDIRECTORYTAG,
+        TIFFTAG_MODELPIXELSCALETAG, TIFFTAG_MODELTIEPOINTTAG, TIFFFieldInfo, TIFFMergeFieldInfo,
+    };
+
+    struct SyncFieldInfo([TIFFFieldInfo; 5]);
+    unsafe impl Sync for SyncFieldInfo {}
+
+    static GEOTIFF_FIELDS: SyncFieldInfo = SyncFieldInfo([
+        TIFFFieldInfo {
+            field_tag: TIFFTAG_MODELPIXELSCALETAG,
+            field_readcount: TIFF_VARIABLE2,
+            field_writecount: TIFF_VARIABLE2,
+            field_type: TIFF_DOUBLE,
+            field_bit: FIELD_CUSTOM,
+            field_oktochange: 1,
+            field_passcount: 1,
+            field_name: c"ModelPixelScaleTag".as_ptr(),
+        },
+        TIFFFieldInfo {
+            field_tag: TIFFTAG_MODELTIEPOINTTAG,
+            field_readcount: TIFF_VARIABLE2,
+            field_writecount: TIFF_VARIABLE2,
+            field_type: TIFF_DOUBLE,
+            field_bit: FIELD_CUSTOM,
+            field_oktochange: 1,
+            field_passcount: 1,
+            field_name: c"ModelTiepointTag".as_ptr(),
+        },
+        TIFFFieldInfo {
+            field_tag: TIFFTAG_GEOKEYDIRECTORYTAG,
+            field_readcount: TIFF_VARIABLE2,
+            field_writecount: TIFF_VARIABLE2,
+            field_type: TIFF_SHORT,
+            field_bit: FIELD_CUSTOM,
+            field_oktochange: 0,
+            field_passcount: 1,
+            field_name: c"GeoKeyDirectoryTag".as_ptr(),
+        },
+        TIFFFieldInfo {
+            field_tag: TIFFTAG_GEODOUBLEPARAMSTAG,
+            field_readcount: TIFF_VARIABLE2,
+            field_writecount: TIFF_VARIABLE2,
+            field_type: TIFF_DOUBLE,
+            field_bit: FIELD_CUSTOM,
+            field_oktochange: 0,
+            field_passcount: 1,
+            field_name: c"GeoDoubleParamsTag".as_ptr(),
+        },
+        TIFFFieldInfo {
+            field_tag: TIFFTAG_GEOASCIIPARAMSTAG,
+            field_readcount: TIFF_VARIABLE2,
+            field_writecount: TIFF_VARIABLE2,
+            field_type: TIFF_ASCII,
+            field_bit: FIELD_CUSTOM,
+            field_oktochange: 0,
+            field_passcount: 0,
+            field_name: c"GeoAsciiParamsTag".as_ptr(),
+        },
+    ]);
+
+    TIFFMergeFieldInfo(tif, GEOTIFF_FIELDS.0.as_ptr(), GEOTIFF_FIELDS.0.len() as i32);
 }
 
 /// Public FFI version - registers GeoTIFF tags for reading/writing
