@@ -9,3 +9,4 @@ tests/report/
 tests/images/*.tif
 tests/images/*.tif
 
+.aider*

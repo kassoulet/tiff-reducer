@@ -84,7 +84,7 @@ check_upx() {
 build_vendored() {
     echo "Building with vendored dependencies..."
     cd "$PROJECT_DIR"
-    
+
     if [ "$USE_MUSL" = true ]; then
         echo "Target: $TARGET_TRIPLE (musl - fully static)"
         cargo build --release --target "$TARGET_TRIPLE"
@@ -129,12 +129,12 @@ build_static() {
 # Function to compress with UPX
 compress_upx() {
     echo "Compressing with UPX..."
-    
+
     local size_before=$(stat -c%s "$BINARY_PATH" 2>/dev/null || stat -f%z "$BINARY_PATH" 2>/dev/null)
-    
+
     # Compress with maximum compression, preserving executable
     upx --best --lzma "$BINARY_PATH"
-    
+
     if [ -f "$BINARY_PATH" ]; then
         local size_after=$(stat -c%s "$BINARY_PATH" 2>/dev/null || stat -f%z "$BINARY_PATH" 2>/dev/null)
         local reduction=$(echo "scale=1; (1 - $size_after / $size_before) * 100" | bc)

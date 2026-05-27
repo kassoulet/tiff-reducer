@@ -4,7 +4,7 @@ A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency
 
 ## Features
 
-> One single executable, no dependencies, no configuration files. No need to install any additional software. No need to configure anything. 
+> One single executable, no dependencies, no configuration files. No need to install any additional software. No need to configure anything.
 
 ### Compression
 - **Multiple Codecs**: Zstd, LZMA, Deflate, LZW, JPEG, WebP, LERC, **Uncompressed**
