@@ -128,95 +128,57 @@ pub unsafe fn copy_ycbcr_tags(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
 
 /// Copy YCbCr color space tags (early version called before compression setup)
 /// Only call this when the destination is also YCbCr (not when converting to RGB)
-pub unsafe fn copy_ycbcr_tags_early(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
-    // Only copy subsampling and coefficients - these are critical for YCbCr encoding
-    // YCbCrPositioning can be copied later with other metadata
-    let mut h_sub: u16 = 0;
-    let mut v_sub: u16 = 0;
-    if TIFFGetField(src, TIFFTAG_YCBCRSUBSAMPLING, &mut h_sub, &mut v_sub) != 0 {
-        if TIFFSetField(dst, TIFFTAG_YCBCRSUBSAMPLING, h_sub as u32, v_sub as u32) == 0 {
-            return Err(anyhow!("Failed to set YCbCr subsampling"));
-        }
-    }
-
-    let mut coeff_r: f32 = 0.0;
-    let mut coeff_g: f32 = 0.0;
-    let mut coeff_b: f32 = 0.0;
-    if TIFFGetField(
-        src,
-        TIFFTAG_YCBCRCOEFFICIENTS,
-        &mut coeff_r,
-        &mut coeff_g,
-        &mut coeff_b,
-    ) != 0
-    {
-        if TIFFSetField(
-            dst,
-            TIFFTAG_YCBCRCOEFFICIENTS,
-            coeff_r as f64,
-            coeff_g as f64,
-            coeff_b as f64,
-        ) == 0
-        {
-            return Err(anyhow!("Failed to set YCbCr coefficients"));
-        }
-    }
-    Ok(())
-}
-
-/// Copy CMYK/Ink-related tags
 pub unsafe fn copy_cmyk_tags(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     // InkSet (single SHORT value)
     let mut inkset: u16 = 0;
     if TIFFGetField(src, TIFFTAG_INKSET, &mut inkset) != 0 {
         if TIFFSetField(dst, TIFFTAG_INKSET, inkset as u32) == 0 {
-            return Err(anyhow!("Failed to set InkSet tag"));
+            return Err(anyhow!("Failed to set InkSet"));
         }
     }
 
-    // DotRange (two SHORT values: 0-65535 representing 0.0-100.0%)
-    let mut dot0: u16 = 0;
-    let mut dot1: u16 = 0;
-    if TIFFGetField(src, TIFFTAG_DOTRANGE, &mut dot0, &mut dot1) != 0 {
-        if TIFFSetField(dst, TIFFTAG_DOTRANGE, dot0 as u32, dot1 as u32) == 0 {
-            return Err(anyhow!("Failed to set DotRange tag"));
-        }
-    }
-
-    // NumberOfInks (single LONG value)
-    let mut num_inks: u32 = 0;
+    // NumberOfInks (single SHORT value)
+    let mut num_inks: u16 = 0;
     if TIFFGetField(src, TIFFTAG_NUMBEROFINKS, &mut num_inks) != 0 {
-        if TIFFSetField(dst, TIFFTAG_NUMBEROFINKS, num_inks) == 0 {
-            return Err(anyhow!("Failed to set NumberOfInks tag"));
+        if TIFFSetField(dst, TIFFTAG_NUMBEROFINKS, num_inks as u32) == 0 {
+            return Err(anyhow!("Failed to set NumberOfInks"));
+        }
+    }
+
+    // DotRange (two SHORT values)
+    let mut dot_min: u16 = 0;
+    let mut dot_max: u16 = 0;
+    if TIFFGetField(src, TIFFTAG_DOTRANGE, &mut dot_min, &mut dot_max) != 0 {
+        if TIFFSetField(dst, TIFFTAG_DOTRANGE, dot_min as u32, dot_max as u32) == 0 {
+            return Err(anyhow!("Failed to set DotRange"));
         }
     }
 
     // InkNames (ASCII string)
-    let mut ink_names: *mut c_char = std::ptr::null_mut();
-    if TIFFGetField(src, TIFFTAG_INKNAMES, &mut ink_names) != 0 {
-        if !ink_names.is_null() {
-            if TIFFSetField(dst, TIFFTAG_INKNAMES, ink_names) == 0 {
-                return Err(anyhow!("Failed to set InkNames tag"));
+    let mut names: *mut c_char = std::ptr::null_mut();
+    if TIFFGetField(src, TIFFTAG_INKNAMES, &mut names) != 0 {
+        if !names.is_null() {
+            if TIFFSetField(dst, TIFFTAG_INKNAMES, names) == 0 {
+                return Err(anyhow!("Failed to set InkNames"));
             }
         }
     }
     Ok(())
 }
 
-/// Copy ImageDescription tag (used for OME-XML metadata)
+/// Copy ImageDescription tag
 pub unsafe fn copy_image_description(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     let mut desc: *mut c_char = std::ptr::null_mut();
     if TIFFGetField(src, TIFFTAG_IMAGEDESCRIPTION, &mut desc) != 0 {
         if !desc.is_null() {
             if TIFFSetField(dst, TIFFTAG_IMAGEDESCRIPTION, desc) == 0 {
-                return Err(anyhow!("Failed to set ImageDescription tag"));
+                return Err(anyhow!("Failed to set ImageDescription"));
             }
         }
     }
     Ok(())
 }
 
-/// Copy GDAL metadata tags (NoDataValue and XML metadata)
 /// These tags require manual registration with libtiff
 /// For now, skip copying as the registration is causing issues
 /// TODO: Fix GDAL tag registration with proper libtiff field info structure
@@ -286,7 +248,7 @@ pub unsafe fn register_geotiff_tags(tif: *mut TIFF) {
             field_type: TIFF_ASCII,
             field_bit: FIELD_CUSTOM,
             field_oktochange: 0,
-            field_passcount: 0,
+            field_passcount: 1,
             field_name: c"GeoAsciiParamsTag".as_ptr(),
         },
     ]);
@@ -361,9 +323,10 @@ unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
 
     // Copy GeoAsciiParamsTag (ASCII string)
     let mut geo_ascii: *mut c_char = std::ptr::null_mut();
-    if TIFFGetField(src, TIFFTAG_GEOASCIIPARAMSTAG, &mut geo_ascii) != 0 {
-        if !geo_ascii.is_null() {
-            if crate::ffi::TIFFSetField(dst, TIFFTAG_GEOASCIIPARAMSTAG, geo_ascii) == 0 {
+    count = 0;
+    if TIFFGetField(src, TIFFTAG_GEOASCIIPARAMSTAG, &mut count, &mut geo_ascii) != 0 {
+        if !geo_ascii.is_null() && count > 0 {
+            if crate::ffi::TIFFSetField(dst, TIFFTAG_GEOASCIIPARAMSTAG, count, geo_ascii) == 0 {
                 return Err(anyhow!("Failed to set GeoAsciiParamsTag"));
             }
         }
