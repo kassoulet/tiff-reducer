@@ -457,11 +457,9 @@ fn test_compression(
 
 /// Generate Markdown report
 fn generate_report(
-    summary: &ReportSummary,
+    lossless_summary: Option<&ReportSummary>,
+    lossy_summary: Option<&ReportSummary>,
     output_path: &Path,
-    format: &str,
-    level: u32,
-    lossy: bool,
 ) {
     let mut report = String::new();
 
@@ -471,49 +469,55 @@ fn generate_report(
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
     ));
 
-    report.push_str("## Configuration\n\n");
-    if lossy {
-        report.push_str(&format!("- **Mode:** Lossy\n- **Level:** {}\n\n", level));
-    } else {
+    report.push_str("## Summary\n\n");
+    if let Some(s) = lossless_summary {
         report.push_str(&format!(
-            "- **Mode:** Lossless\n- **Format:** {}\n- **Level:** {}\n\n",
-            format, level
+            "- [Lossless Report](#lossless-report): {} working, {} failed\n",
+            s.success, s.failed
         ));
     }
+    if let Some(s) = lossy_summary {
+        report.push_str(&format!(
+            "- [Lossy Report](#lossy-report): {} working, {} failed\n",
+            s.success, s.failed
+        ));
+    }
+    report.push('\n');
 
+    if let Some(s) = lossless_summary {
+        report.push_str("<a id=\"lossless-report\"></a>\n## Lossless Report\n\n");
+        render_section(&mut report, s);
+    }
+    if let Some(s) = lossy_summary {
+        report.push_str("<a id=\"lossy-report\"></a>\n## Lossy Report\n\n");
+        render_section(&mut report, s);
+    }
+
+    let mut file = fs::File::create(output_path).expect("Failed to create report file");
+    file.write_all(report.as_bytes())
+        .expect("Failed to write report");
+
+    println!("\nReport written to {}", output_path.display());
+}
+
+fn render_section(report: &mut String, summary: &ReportSummary) {
     // Summary table
-    report.push_str("## Summary\n\n");
-    report.push_str("| Category | Count | Percentage |\n");
-    report.push_str("|----------|-------|------------|\n");
+    report.push_str(
+        "### Summary\n\n| Category | Count | Percentage |\n|----------|-------|------------|\n",
+    );
     report.push_str(&format!(
-        "| ✅ Working | {} | {:.1}% |\n",
+        "| ✅ Working | {} | {:.1}% |\n| ❌ Failed | {} | {:.1}% |\n| **Total** | **{}** | **100%** |\n\n",
         summary.success,
-        if summary.total > 0 {
-            summary.success as f64 / summary.total as f64 * 100.0
-        } else {
-            0.0
-        }
-    ));
-    report.push_str(&format!(
-        "| ❌ Failed | {} | {:.1}% |\n",
+        if summary.total > 0 { summary.success as f64 / summary.total as f64 * 100.0 } else { 0.0 },
         summary.failed,
-        if summary.total > 0 {
-            summary.failed as f64 / summary.total as f64 * 100.0
-        } else {
-            0.0
-        }
-    ));
-    report.push_str(&format!(
-        "| **Total** | **{}** | **100%** |\n\n",
+        if summary.total > 0 { summary.failed as f64 / summary.total as f64 * 100.0 } else { 0.0 },
         summary.total
     ));
 
     // Failed images
     let failed: Vec<&TestResult> = summary.results.iter().filter(|r| !r.success).collect();
     if !failed.is_empty() {
-        report.push_str("## ❌ Failed Images\n\n");
-        report.push_str("| File | Original Size | Error |\n");
-        report.push_str("|------|---------------|-------|\n");
+        report.push_str("### ❌ Failed Images\n\n| File | Original Size | Error |\n|------|---------------|-------|\n");
         for result in &failed {
             report.push_str(&format!(
                 "| `{}` | {} bytes | {} |\n",
@@ -525,20 +529,13 @@ fn generate_report(
         report.push('\n');
     }
 
-    // Working images with thumbnails
+    // Working images
     let working: Vec<&TestResult> = summary.results.iter().filter(|r| r.success).collect();
     if !working.is_empty() {
-        report.push_str("## ✅ Working Images\n\n");
-        report.push_str(&format!(
-            "**{} images** successfully compressed with thumbnails below:\n\n",
-            working.len()
-        ));
-
+        report.push_str(
+            "### ✅ Working Images\n\n| Original | Compressed | Details |\n|:---:|:---:|:---:|\n",
+        );
         for result in &working {
-            report.push_str(&format!("### {}\n\n", result.name));
-
-            report.push_str("| Original | Compressed | Details |\n");
-            report.push_str("|:---:|:---:|:---:|\n");
             report.push_str("| ");
             if let Some(ref thumb) = result.thumb_orig {
                 report.push_str(&format!("![Original]({})", thumb));
@@ -557,45 +554,11 @@ fn generate_report(
             } else {
                 0.0
             };
-
-            report.push_str(" | ");
-            report.push_str(&format!(
-                "**Codec:** {}<br>**Size:** {} → {}<br>**Red:** {:.1}%<br>**Time:** {}ms",
-                result.codec,
-                format_size(result.orig_size),
-                format_size(result.comp_size),
-                reduction,
-                result.duration_ms
-            ));
-            report.push_str(" |\n\n");
+            report.push_str(&format!(" | **File:** `{}`<br>**Codec:** {}<br>**Size:** {} → {}<br>**Red:** {:.1}%<br>**Time:** {}ms |\n",
+                result.name, result.codec, format_size(result.orig_size), format_size(result.comp_size), reduction, result.duration_ms));
         }
+        report.push('\n');
     }
-
-    // Performance stats
-    let total_sec = summary.total_duration_ms as f64 / 1000.0;
-    let avg_ms = if summary.total > 0 {
-        summary.total_duration_ms as f64 / summary.total as f64
-    } else {
-        0.0
-    };
-    report.push_str("## Performance Metrics\n\n");
-    report.push_str(&format!("- **Total execution time:** {:.2}s\n", total_sec));
-    report.push_str(&format!("- **Average time per image:** {:.0}ms\n", avg_ms));
-    report.push_str(&format!(
-        "- **Throughput:** {:.1} images/sec\n\n",
-        if total_sec > 0.0 {
-            summary.total as f64 / total_sec
-        } else {
-            0.0
-        }
-    ));
-
-    // Write report
-    let mut file = fs::File::create(output_path).expect("Failed to create report file");
-    file.write_all(report.as_bytes())
-        .expect("Failed to write report");
-
-    println!("\nReport written to {}", output_path.display());
 }
 
 fn format_size(size: u64) -> String {
@@ -664,73 +627,57 @@ fn main() {
         println!("Format: {}, Level: {}", cli.format, cli.level);
     }
 
-    let mut summary = ReportSummary {
+    let mut lossless_summary = ReportSummary {
         total: images.len(),
         success: 0,
         failed: 0,
         results: Vec::new(),
         total_duration_ms: 0,
     };
-
-    let overall_start = Instant::now();
-
-    for (i, image_path) in images.iter().enumerate() {
+    let start = Instant::now();
+    for image_path in &images {
         let result = test_compression(
             image_path,
             &binary_path,
             &cli.format,
             cli.level,
-            cli.lossy,
+            false,
             &thumbs_dir,
         );
-
         if result.success {
-            summary.success += 1;
-            println!("[{}/{}] {}... ✅", i + 1, summary.total, result.name);
+            lossless_summary.success += 1;
         } else {
-            summary.failed += 1;
-            println!(
-                "[{}/{}] {}... ❌ ({})",
-                i + 1,
-                summary.total,
-                result.name,
-                result.error.as_deref().unwrap_or("Unknown")
-            );
+            lossless_summary.failed += 1;
         }
-
-        summary.results.push(result);
+        lossless_summary.results.push(result);
     }
+    lossless_summary.total_duration_ms = start.elapsed().as_millis() as u64;
 
-    summary.total_duration_ms = overall_start.elapsed().as_millis() as u64;
-
-    generate_report(&summary, &output_path, &cli.format, cli.level, cli.lossy);
-
-    println!("\n{}", "=".repeat(60));
-    println!("SUMMARY");
-    println!("{}", "=".repeat(60));
-    println!(
-        "Working:     {}/{} ({:.1}%)",
-        summary.success,
-        summary.total,
-        if summary.total > 0 {
-            summary.success as f64 / summary.total as f64 * 100.0
+    let mut lossy_summary = ReportSummary {
+        total: images.len(),
+        success: 0,
+        failed: 0,
+        results: Vec::new(),
+        total_duration_ms: 0,
+    };
+    let start = Instant::now();
+    for image_path in &images {
+        let result = test_compression(
+            image_path,
+            &binary_path,
+            &cli.format,
+            cli.level,
+            true,
+            &thumbs_dir,
+        );
+        if result.success {
+            lossy_summary.success += 1;
         } else {
-            0.0
+            lossy_summary.failed += 1;
         }
-    );
-    println!(
-        "Failed:      {}/{} ({:.1}%)",
-        summary.failed,
-        summary.total,
-        if summary.total > 0 {
-            summary.failed as f64 / summary.total as f64 * 100.0
-        } else {
-            0.0
-        }
-    );
-    println!(
-        "Total time:  {:.2}s",
-        summary.total_duration_ms as f64 / 1000.0
-    );
-    println!("{}", "=".repeat(60));
+        lossy_summary.results.push(result);
+    }
+    lossy_summary.total_duration_ms = start.elapsed().as_millis() as u64;
+
+    generate_report(Some(&lossless_summary), Some(&lossy_summary), &output_path);
 }
