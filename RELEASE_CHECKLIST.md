@@ -1,12 +1,12 @@
-# Release Checklist for v0.3.1
+# Release Checklist for v0.4.0
 
-This document tracks the release readiness of tiff-reducer v0.3.1.
+This document tracks the release readiness of tiff-reducer v0.4.0.
 
 ## Version Information
 
-- **Version**: 0.3.1
-- **Release Date**: 2026-03-22
-- **Previous Version**: 0.2.0 (2026-03-13)
+- **Version**: 0.4.0
+- **Release Date**: 2026-05-28
+- **Previous Version**: 0.3.1 (2026-03-22)
 
 ---
 
@@ -28,10 +28,10 @@ This document tracks the release readiness of tiff-reducer v0.3.1.
 - [x] Thumbnail images for GitHub display
 
 ### Version Consistency
-- [x] Cargo.toml: version = "0.3.1"
-- [x] CHANGELOG.md: [0.3.1] section complete
-- [x] ROADMAP.md: v0.3.1 marked as completed
-- [x] README.md: References v0.3.1
+- [x] Cargo.toml: version = "0.4.0"
+- [x] CHANGELOG.md: [0.4.0] section complete
+- [x] ROADMAP.md: v0.4.0 marked as completed
+- [x] README.md: References v0.4.0
 
 ### Testing
 - [x] Integration tests: 6/6 passing
@@ -63,8 +63,8 @@ This document tracks the release readiness of tiff-reducer v0.3.1.
 ## Release Artifacts
 
 ### Expected Outputs
-- [ ] GitHub release: v0.3.1
-- [ ] Git tag: v0.3.1
+- [ ] GitHub release: v0.4.0
+- [ ] Git tag: v0.4.0
 - [ ] crates.io publish: `cargo publish`
 - [ ] Release notes published
 
@@ -95,8 +95,8 @@ This document tracks the release readiness of tiff-reducer v0.3.1.
 
 ### Create Git Tag
 ```bash
-git tag -a v0.3.1 -m "Release v0.3.1 - HTML Visual Test Reports, GeoTIFF Support, LibTIFF v4.7.1"
-git push origin v0.3.1
+git tag -a v0.4.0 -m "Release v0.4.0 - HTML Visual Test Reports, GeoTIFF Support, LibTIFF v4.7.1"
+git push origin v0.4.0
 ```
 
 ### Publish to crates.io
@@ -115,9 +115,9 @@ cargo publish
 ### Create GitHub Release
 1. Go to https://github.com/kassoulet/tiff-reducer/releases
 2. Click "Create a new release"
-3. Tag version: v0.3.1
+3. Tag version: v0.4.0
 4. Target: develop branch
-5. Release title: v0.3.1 - HTML Visual Test Reports, GeoTIFF Support
+5. Release title: v0.4.0 - HTML Visual Test Reports, GeoTIFF Support
 6. Copy changelog from CHANGELOG.md
 7. Attach binaries (optional)
 
@@ -140,7 +140,7 @@ cargo publish
 
 ## Release Notes Summary
 
-### What's New in v0.3.1
+### What's New in v0.4.0
 
 **Major Features:**
 - HTML Visual Test Reports with side-by-side image comparisons
@@ -168,5 +168,5 @@ cargo publish
 ---
 
 *Checklist created: 2026-03-22*
-*Last updated: 2026-03-22 (v0.3.1)*
+*Last updated: 2026-03-22 (v0.4.0)*
 *Release manager: Gautier Portet*

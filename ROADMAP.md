@@ -4,7 +4,18 @@ This document lists future features and known limitations to address in future r
 
 ---
 
-## Current Release: v0.3.1
+## Current Release: v0.4.0
+
+### Completed in v0.4.0 (2026-05-28)
+- ✅ **`--lossy` mode**: Automatically benchmark WebP and JPEG and pick smallest result.
+- ✅ **Smart Codec Selection**: Lossy mode tries multiple codecs and reports the "winner".
+- ✅ **Rust-based visual test reports** with thumbnails (replaced Python/HTML).
+- ✅ **Consolidated Test Runners**: Unified logic into `scripts/run-tests.sh`.
+- ✅ **Removed Python Dependencies**: Pure Shell/Rust testing lifecycle.
+- ✅ **FFI Quality Support**: Added `TIFFTAG_JPEGQUALITY` and `TIFFTAG_WEBP_LEVEL`.
+- ✅ **Security Remediation**: Phases 1-4 completed (18 audit findings addressed).
+
+### Previous Release: v0.3.1
 
 ### Completed in v0.3.1 (2026-03-22)
 - ✅ GeoTIFF metadata preservation (all 5 tags)
@@ -106,7 +117,7 @@ See [SECURITY.md](SECURITY.md) for detailed findings and status.
 ## High Priority
 
 ### 1. GeoTIFF Support
-**Status:** ✅ **COMPLETED** (v0.3.1) - Metadata preservation works, compression limitation documented
+**Status:** ✅ **COMPLETED** (Current) - Metadata preservation works, compression limitation documented
 
 **Issue:** GeoTIFF tags (coordinate system, origin, pixel size) were not preserved during compression.
 
@@ -161,7 +172,7 @@ None - GeoTIFF compression and metadata preservation both work correctly with li
 
 ---
 
-### 3. Security Audit (v0.3.1) - March 2026
+### 3. Security Audit (Current) - March 2026
 **Status:** ⚠️ **IN PROGRESS** - 18 issues identified, remediation planned
 
 **Comprehensive security audit completed on 2026-03-22:**
@@ -280,11 +291,13 @@ See `SECURITY.md` for detailed findings and remediation status.
 ## Medium Priority
 
 ### 10. CLI & User Experience
-- ✅ **Add `--lossy` mode**: Automatically select a lossy format (WebP or JPEG) for maximum size reduction when archival quality is not required. (Completed in v0.3.2)
+- ✅ **Add `--lossy` mode**: Automatically benchmark WebP and JPEG and pick smallest result. (Completed in v0.4.0)
+- [ ] **Add `--lossy` mode tests**: Implement dedicated integration tests and a 'Lossy Optimization' section in the Markdown test report.
 - [ ] **Interactive Mode**: Prompt for settings when run without arguments or with a `--interactive` flag.
 - [ ] **Configuration Files**: Support for `.tiff-reducer.toml` to save preferred settings per-project.
 
 ### 8. YCbCr Color Space Handling
+
 **Status:** ✅ **COMPLETED**
 
 **Issue:** Some TIFF files use YCbCr photometric interpretation.
@@ -463,7 +476,7 @@ pub const COMPRESSION_JPEGXL: u16 = 50005;
 ---
 
 ### 1.1 HTML Visual Test Reports
-**Status:** ✅ **COMPLETED** (v0.3.1)
+**Status:** ✅ **COMPLETED** (Current)
 
 **Implementation:** Hybrid approach using Rust + GDAL + Python
 
@@ -566,7 +579,7 @@ tests/report/
     └── image1_comp.json
 ```
 
-**Test Results (v0.3.1):**
+**Test Results (Current):**
 - **Total images:** 304
 - **Working:** 292 (96.1%)
 - **Skipped:** 12 (3.9%) - known corrupt/unsupported formats
@@ -592,7 +605,7 @@ tests/report/
 
 **Issue:** Current tests check dimensions and band count, but not all metadata tags.
 
-**Required Validation (v0.3.1):**
+**Required Validation (Current):**
 - [x] **GeoTIFF tags preservation**
   - ModelPixelScaleTag (33550)
   - ModelTiepointTag (33922)
@@ -628,7 +641,7 @@ for each test image:
 ---
 
 ### 3. Test Framework Improvements
-**Status:** ✅ **COMPLETED** (v0.3.1)
+**Status:** ✅ **COMPLETED** (Current)
 
 **Issue:** Current test infrastructure is bash-based and lacks structure.
 
@@ -787,7 +800,8 @@ tiff-reducer compress ./input_folder -o ./output --jobs 4
   - LERC codec: Limited Error Raster Compression for scientific data
   - JPEG-XL codec: Modern high-efficiency compression
   - Parallelism: `--jobs` flag for controlling file-level parallelism
-- **v0.3.1** (Current): HTML Visual Test Reports, GeoTIFF support, LibTIFF v4.7.1
+- **v0.4.0** (Current): Lossy mode, consolidated Rust/Shell testing, security remediation completed.
+- **v0.3.1**: HTML Visual Test Reports, GeoTIFF support, LibTIFF v4.7.1
   - ✅ **HTML Visual Test Reports**: Python-based report generator with GDAL thumbnails
   - ✅ **Tiled Image Processing**: Proper tile reading via `TIFFReadEncodedTile`
   - ✅ **Test Infrastructure**: Comprehensive test report generator (Markdown + HTML)

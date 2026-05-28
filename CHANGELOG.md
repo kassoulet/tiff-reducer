@@ -5,14 +5,27 @@ All notable changes to tiff-reducer are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-05-28
 
-### Planned for v0.4.0
-- **Security Remediation**: Address 18 security audit findings
-  - Phase 1: Critical fixes (path traversal, FFI return checking)
-  - Phase 2: High severity issues
-  - Phase 3: Medium severity issues
-  - Phase 4: Low severity issues
+### Added
+- **`--lossy` mode**: Automatically benchmarks WebP and JPEG and selects the smallest result for maximum size reduction.
+- **Smart Codec Selection**: Lossy mode tries multiple codecs and reports the "winner".
+- **Quality Level Support**: Added `TIFFTAG_JPEGQUALITY` and `TIFFTAG_WEBP_LEVEL` to FFI for explicit quality control (1-100).
+- **Rust-based Visual Reports**: New `test-report` binary replaces Python implementation.
+- **Automatic Thumbnails**: Generates side-by-side PNG thumbnails in test reports using a 3-tier fallback strategy (image crate, ImageMagick, self-quantization).
+
+### Changed
+- **Consolidated Test Runners**: Unified all testing logic into `scripts/run-tests.sh`.
+- **Removed Python Dependencies**: Deleted all Python reporting scripts and requirement files.
+- **Strict GDAL Reference**: Re-integrated GDAL as a mandatory reference for metadata and pixel-level validation in integration tests.
+
+### Security
+- **Security Remediation**: Completed Phase 1-4 of security fixes.
+  - Fixed path traversal vulnerability in filename sanitization.
+  - Added return value checking for all `TIFFSetField` and `TIFFGetField` calls.
+  - Fixed buffer overflows in scanline and tile processing.
+  - Addressed integer overflows in size calculations.
+  - Improved temporary file management.
 
 ---
 
@@ -208,7 +221,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - BigTIFF support
 - Vendored build option
 
-[Unreleased]: https://github.com/kassoulet/tiff-reducer/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/kassoulet/tiff-reducer/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/kassoulet/tiff-reducer/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/kassoulet/tiff-reducer/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kassoulet/tiff-reducer/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kassoulet/tiff-reducer/releases/tag/v0.1.0
