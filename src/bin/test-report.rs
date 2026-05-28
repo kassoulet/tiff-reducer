@@ -41,6 +41,7 @@ struct TestResult {
     duration_ms: u64,
     thumb_orig: Option<String>,
     thumb_comp: Option<String>,
+    codec: String,
 }
 
 #[derive(Debug)]
@@ -450,6 +451,7 @@ fn test_compression(
         duration_ms,
         thumb_orig,
         thumb_comp,
+        codec: format!("{} (lvl {})", format, level),
     }
 }
 
@@ -535,8 +537,8 @@ fn generate_report(
         for result in &working {
             report.push_str(&format!("### {}\n\n", result.name));
 
-            report.push_str("| Original | Compressed |\n");
-            report.push_str("|:---:|:---:|\n");
+            report.push_str("| Original | Compressed | Details |\n");
+            report.push_str("|:---:|:---:|:---:|\n");
             report.push_str("| ");
             if let Some(ref thumb) = result.thumb_orig {
                 report.push_str(&format!("![Original]({})", thumb));
@@ -549,7 +551,6 @@ fn generate_report(
             } else {
                 report.push_str("*N/A*");
             }
-            report.push_str(" |\n\n");
 
             let reduction = if result.orig_size > 0 {
                 (1.0 - result.comp_size as f64 / result.orig_size as f64) * 100.0
@@ -557,16 +558,16 @@ fn generate_report(
                 0.0
             };
 
+            report.push_str(" | ");
             report.push_str(&format!(
-                "- **Original size:** {} bytes\n",
-                format_size(result.orig_size)
+                "**Codec:** {}<br>**Size:** {} → {}<br>**Red:** {:.1}%<br>**Time:** {}ms",
+                result.codec,
+                format_size(result.orig_size),
+                format_size(result.comp_size),
+                reduction,
+                result.duration_ms
             ));
-            report.push_str(&format!(
-                "- **Compressed size:** {} bytes\n",
-                format_size(result.comp_size)
-            ));
-            report.push_str(&format!("- **Reduction:** ⬇ {:.1}%\n", reduction));
-            report.push_str(&format!("- **Time:** {}ms\n\n", result.duration_ms));
+            report.push_str(" |\n\n");
         }
     }
 
