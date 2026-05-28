@@ -465,13 +465,18 @@ fn generate_report(
 
     report.push_str("# tiff-reducer Test Report\n\n");
     report.push_str(&format!(
-        "**Generated:** {}\n",
+        "**Generated:** {}\n\n",
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
     ));
+
+    report.push_str("## Configuration\n\n");
     if lossy {
-        report.push_str(&format!("**Mode:** Lossy (level {})\n\n", level));
+        report.push_str(&format!("- **Mode:** Lossy\n- **Level:** {}\n\n", level));
     } else {
-        report.push_str(&format!("**Format:** {} (level {})\n\n", format, level));
+        report.push_str(&format!(
+            "- **Mode:** Lossless\n- **Format:** {}\n- **Level:** {}\n\n",
+            format, level
+        ));
     }
 
     // Summary table
