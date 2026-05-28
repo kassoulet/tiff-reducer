@@ -21,6 +21,9 @@ struct Cli {
     #[arg(short, long, default_value_t = 19)]
     level: u32,
 
+    #[arg(short, long)]
+    lossy: bool,
+
     #[arg(short, long, default_value = "tests/README.md")]
     output: String,
 
@@ -169,15 +172,11 @@ fn test_compression(
     binary_path: &Path,
     format: &str,
     level: u32,
+    lossy: bool,
     thumbs_dir: &Path,
 ) -> TestResult {
     let name = input_path
         .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-    let stem = input_path
-        .file_stem()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
         .to_string();
@@ -193,12 +192,14 @@ fn test_compression(
     cmd.arg("compress")
         .arg(input_path)
         .arg("-o")
-        .arg(&output_path)
-        .arg("-f")
-        .arg(format)
-        .arg("-l")
-        .arg(level.to_string())
-        .stdout(std::process::Stdio::null())
+        .arg(&output_path);
+
+    if lossy {
+        cmd.arg("--lossy").arg("-l").arg(level.to_string());
+    } else {
+        cmd.arg("-f").arg(format).arg("-l").arg(level.to_string());
+    }
+    cmd.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
     let success = match cmd.output() {
@@ -227,6 +228,10 @@ fn test_compression(
     let mut thumb_comp = None;
 
     if success {
+        let stem = input_path
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
         let thumb_orig_name = format!("{}_orig.png", stem);
         let thumb_comp_name = format!("{}_comp.png", stem);
         let thumb_orig_path = thumbs_dir.join(&thumb_orig_name);
@@ -253,7 +258,13 @@ fn test_compression(
 }
 
 /// Generate Markdown report
-fn generate_report(summary: &ReportSummary, output_path: &Path, format: &str, level: u32) {
+fn generate_report(
+    summary: &ReportSummary,
+    output_path: &Path,
+    format: &str,
+    level: u32,
+    lossy: bool,
+) {
     let mut report = String::new();
 
     report.push_str("# tiff-reducer Test Report\n\n");
@@ -261,7 +272,11 @@ fn generate_report(summary: &ReportSummary, output_path: &Path, format: &str, le
         "**Generated:** {}\n",
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
     ));
-    report.push_str(&format!("**Format:** {} (level {})\n\n", format, level));
+    if lossy {
+        report.push_str(&format!("**Mode:** Lossy (level {})\n\n", level));
+    } else {
+        report.push_str(&format!("**Format:** {} (level {})\n\n", format, level));
+    }
 
     // Summary table
     report.push_str("## Summary\n\n");
@@ -441,7 +456,11 @@ fn main() {
     }
 
     println!("Testing {} images...", images.len());
-    println!("Format: {}, Level: {}", cli.format, cli.level);
+    if cli.lossy {
+        println!("Mode: Lossy, Level: {}", cli.level);
+    } else {
+        println!("Format: {}, Level: {}", cli.format, cli.level);
+    }
 
     let mut summary = ReportSummary {
         total: images.len(),
@@ -459,6 +478,7 @@ fn main() {
             &binary_path,
             &cli.format,
             cli.level,
+            cli.lossy,
             &thumbs_dir,
         );
 
@@ -481,7 +501,7 @@ fn main() {
 
     summary.total_duration_ms = overall_start.elapsed().as_millis() as u64;
 
-    generate_report(&summary, &output_path, &cli.format, cli.level);
+    generate_report(&summary, &output_path, &cli.format, cli.level, cli.lossy);
 
     println!("\n{}", "=".repeat(60));
     println!("SUMMARY");
@@ -511,10 +531,4 @@ fn main() {
         summary.total_duration_ms as f64 / 1000.0
     );
     println!("{}", "=".repeat(60));
-
-    if summary.failed > 0 {
-        // We don't necessarily want to exit with 1 if some images failed but the tool worked for others,
-        // but for CI it might be better to exit with 1.
-        // std::process::exit(1);
-    }
 }

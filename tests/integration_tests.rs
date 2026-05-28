@@ -386,9 +386,32 @@ fn test_geotiff_metadata_preservation() {
     assert_eq!(orig_gt, comp_gt, "geoTransform should be preserved");
 }
 
-// ============================================================================
-// Test error handling
-// ============================================================================
+#[test]
+fn test_lossy_mode_benchmarking() {
+    let test_images = get_all_test_images();
+    if test_images.is_empty() {
+        return;
+    }
+
+    let input_path = &test_images[0];
+    let temp_dir = TempDir::new().unwrap();
+    let output_path = temp_dir.path().join("lossy.tif");
+
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
+    cmd.arg("compress")
+        .arg(input_path)
+        .arg("-o")
+        .arg(&output_path)
+        .arg("--lossy")
+        .arg("--level")
+        .arg("90")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    let result = cmd.output().expect("Failed to run lossy test");
+    assert!(result.status.success(), "Lossy mode should succeed");
+    assert!(output_path.exists(), "Output file should be created");
+}
 
 #[test]
 fn test_corrupt_file_handling() {

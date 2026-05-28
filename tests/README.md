@@ -1,6 +1,6 @@
 # tiff-reducer Test Report
 
-**Generated:** 2026-05-28 22:48:10
+**Generated:** 2026-05-28 23:01:39
 **Format:** zstd (level 19)
 
 ## Summary
@@ -35,7 +35,7 @@
 - **Original size:** 6.2 KB bytes
 - **Compressed size:** 2.3 KB bytes
 - **Reduction:** ⬇ 63.7%
-- **Time:** 9ms
+- **Time:** 8ms
 
 ### 170918_tn_neutrophil_migration_wave.ome.tif
 
@@ -46,7 +46,7 @@
 - **Original size:** 2.0 MB bytes
 - **Compressed size:** 1.3 MB bytes
 - **Reduction:** ⬇ 35.1%
-- **Time:** 60ms
+- **Time:** 53ms
 
 ### 181003_multi_pos_time_course_1_MMStack.ome.tif
 
@@ -57,7 +57,7 @@
 - **Original size:** 3.8 MB bytes
 - **Compressed size:** 2.2 MB bytes
 - **Reduction:** ⬇ 41.3%
-- **Time:** 30ms
+- **Time:** 37ms
 
 ### 4D-series.ome.tif
 
@@ -68,10 +68,10 @@
 - **Original size:** 2.5 MB bytes
 - **Compressed size:** 81.9 KB bytes
 - **Reduction:** ⬇ 96.8%
-- **Time:** 41ms
+- **Time:** 43ms
 
 ## Performance Metrics
 
-- **Total execution time:** 1.21s
-- **Average time per image:** 242ms
-- **Throughput:** 4.1 images/sec
+- **Total execution time:** 1.18s
+- **Average time per image:** 235ms
+- **Throughput:** 4.3 images/sec
