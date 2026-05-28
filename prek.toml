@@ -50,7 +50,7 @@ hooks = [
   {
     id = "cargo-test",
     name = "Cargo Test (All Tests + Report)",
-    entry = "bash -c 'cargo test --test integration_tests && python3 tests/generate_test_report.py'",
+    entry = "./scripts/run-tests.sh",
     language = "system",
     types = ["rust"],
     pass_filenames = false,
