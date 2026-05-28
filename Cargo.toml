@@ -35,7 +35,7 @@ default = []
 vendored = []
 
 [dev-dependencies]
-assert_cmd = "2.0"
+assert_cmd = "2.2"
 predicates = "3.1"
 tempfile = "3.10"
 serde = { version = "1.0", features = ["derive"] }
