@@ -23,7 +23,7 @@ tempfile = "3.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = "0.4"
-image = { version = "0.24", features = ["tiff", "png"] }
+image = { version = "0.25", features = ["tiff", "png"] }
 
 [build-dependencies]
 pkg-config = "0.3"
