@@ -52,6 +52,12 @@ tiff-reducer compress input.tif --output optimized.tif --format zstd --level 22
 tiff-reducer compress input.tif --output optimized.tif --extreme --quantize
 ```
 
+### Lossy Optimization (WebP + JPEG)
+Tries both WebP and JPEG and selects the smallest result. Default quality is 90.
+```bash
+tiff-reducer compress input.tif --output optimized.tif --lossy --level 85
+```
+
 ### Benchmark Mode (timing and throughput)
 ```bash
 tiff-reducer compress input.tif --output optimized.tif --benchmark

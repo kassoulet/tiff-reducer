@@ -280,7 +280,7 @@ See `SECURITY.md` for detailed findings and remediation status.
 ## Medium Priority
 
 ### 10. CLI & User Experience
-- [ ] **Add `--lossy` mode**: Automatically select a lossy format (WebP or JPEG) for maximum size reduction when archival quality is not required.
+- ✅ **Add `--lossy` mode**: Automatically select a lossy format (WebP or JPEG) for maximum size reduction when archival quality is not required. (Completed in v0.3.2)
 - [ ] **Interactive Mode**: Prompt for settings when run without arguments or with a `--interactive` flag.
 - [ ] **Configuration Files**: Support for `.tiff-reducer.toml` to save preferred settings per-project.
 

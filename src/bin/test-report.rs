@@ -341,7 +341,10 @@ fn generate_report(summary: &ReportSummary, output_path: &Path, format: &str, le
                 0.0
             };
 
-            report.push_str(&format!("- **Original size:** {} bytes\n", format_size(result.orig_size)));
+            report.push_str(&format!(
+                "- **Original size:** {} bytes\n",
+                format_size(result.orig_size)
+            ));
             report.push_str(&format!(
                 "- **Compressed size:** {} bytes\n",
                 format_size(result.comp_size)
@@ -451,7 +454,13 @@ fn main() {
     let overall_start = Instant::now();
 
     for (i, image_path) in images.iter().enumerate() {
-        let result = test_compression(image_path, &binary_path, &cli.format, cli.level, &thumbs_dir);
+        let result = test_compression(
+            image_path,
+            &binary_path,
+            &cli.format,
+            cli.level,
+            &thumbs_dir,
+        );
 
         if result.success {
             summary.success += 1;

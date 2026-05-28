@@ -71,12 +71,16 @@ enum Commands {
         output: Option<PathBuf>,
 
         /// Compression format to use
-        #[arg(short, long, value_enum, default_value_t = CompressionFormat::Zstd)]
+        #[arg(short, long, value_enum, default_value_t = CompressionFormat::Zstd, conflicts_with = "lossy")]
         format: CompressionFormat,
 
         /// Compression level (Zstd: 1-22 default 19, Deflate/LZMA: 1-9, JPEG/WebP: 1-100)
         #[arg(short, long)]
         level: Option<u32>,
+
+        /// Use lossy compression (tries WebP and JPEG, picks smallest)
+        #[arg(long)]
+        lossy: bool,
 
         /// Quantize to 8-bit
         #[arg(long)]
@@ -202,13 +206,14 @@ fn main() -> Result<()> {
             output,
             format,
             level,
+            lossy,
             quantize,
             extreme,
             dry_run,
             benchmark,
             jobs,
         } => compress_command(
-            input, output, format, level, quantize, extreme, dry_run, benchmark, jobs,
+            input, output, format, level, lossy, quantize, extreme, dry_run, benchmark, jobs,
         ),
     }
 }
@@ -294,6 +299,7 @@ fn compress_command(
     output: Option<PathBuf>,
     format: CompressionFormat,
     level: Option<u32>,
+    lossy: bool,
     quantize: bool,
     extreme: bool,
     dry_run: bool,
@@ -377,6 +383,7 @@ fn compress_command(
                 &target_output,
                 format,
                 level,
+                lossy,
                 quantize,
                 extreme,
                 dry_run,
@@ -440,6 +447,7 @@ fn process_single_file(
     output: &Path,
     format: CompressionFormat,
     level: Option<u32>,
+    lossy: bool,
     quantize: bool,
     extreme: bool,
     dry_run: bool,
@@ -457,8 +465,19 @@ fn process_single_file(
             CompressionFormat::Deflate,
             CompressionFormat::JpegXl,
         ]
+    } else if lossy {
+        vec![CompressionFormat::Webp, CompressionFormat::Jpeg]
     } else {
         vec![format]
+    };
+
+    // Default level for lossy compression if not specified
+    let effective_level = if level.is_none()
+        && (lossy || matches!(format, CompressionFormat::Webp | CompressionFormat::Jpeg))
+    {
+        Some(90)
+    } else {
+        level
     };
 
     // Determine sample format to decide which predictors to test
@@ -477,6 +496,8 @@ fn process_single_file(
             // For integer data, only test None and Horizontal
             vec![Predictor::None, Predictor::Horizontal]
         }
+    } else if lossy {
+        vec![Predictor::None]
     } else {
         vec![Predictor::Horizontal] // default
     };
@@ -486,9 +507,11 @@ fn process_single_file(
     let mut best_size = u64::MAX;
     let mut results: Vec<(CompressionFormat, Predictor, u64)> = Vec::new();
 
-    if extreme {
+    let should_benchmark = extreme || (lossy && formats.len() > 1);
+
+    if should_benchmark {
         pb.set_message(format!(
-            "Extreme mode: benchmarking formats+predictors for {:?}",
+            "Benchmarking formats for {:?}",
             input.file_name().unwrap_or(input.as_os_str())
         ));
 
@@ -510,25 +533,34 @@ fn process_single_file(
             let temp_out = input.with_extension(format!("tmp_{:?}_{}", fmt, i));
             let cid = fmt.to_ffi();
             let pid = pred.to_ffi();
-            let _ = run_compression_pass(input, &temp_out, cid, pid, None, quantize);
-            let size = temp_out.metadata().map(|m| m.len()).unwrap_or(u64::MAX);
-            results.push((*fmt, *pred, size));
-            if size < best_size {
-                best_size = size;
-                best_format = *fmt;
-                best_predictor = *pred;
+
+            // Only add to results if compression actually succeeded
+            if run_compression_pass(input, &temp_out, cid, pid, effective_level, quantize).is_ok() {
+                let size = temp_out.metadata().map(|m| m.len()).unwrap_or(u64::MAX);
+                if size > 0 && size < u64::MAX {
+                    results.push((*fmt, *pred, size));
+                    if size < best_size {
+                        best_size = size;
+                        best_format = *fmt;
+                        best_predictor = *pred;
+                    }
+                }
+                let _ = fs::remove_file(temp_out);
             }
-            let _ = fs::remove_file(temp_out);
 
             // Update progress
             let progress = ((i + 1) as u64 * 100) / total as u64;
             pb.set_position(progress);
-            pb.set_message(format!("Extreme: {}/{} combinations tested", i + 1, total));
+            pb.set_message(format!(
+                "Benchmarking: {}/{} combinations tested",
+                i + 1,
+                total
+            ));
         }
 
         // Display results for each combination
         println!(
-            "\n[{}] Extreme mode results:",
+            "\n[{}] Compression results:",
             input
                 .file_name()
                 .unwrap_or(input.as_os_str())
@@ -568,7 +600,7 @@ fn process_single_file(
     // Final compression with best format and predictor
     let cid = best_format.to_ffi();
     let pid = best_predictor.to_ffi();
-    run_compression_pass(input, output, cid, pid, level, quantize)?;
+    run_compression_pass(input, output, cid, pid, effective_level, quantize)?;
 
     let compressed_size = fs::metadata(output)?.len();
     let elapsed = start_time.elapsed();
@@ -838,6 +870,18 @@ unsafe fn process_single_ifd(
                 let clamped: i32 = lvl.clamp(1, 100) as i32;
                 if TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, clamped) == 0 {
                     return Err(anyhow!("Failed to set Deflate level"));
+                }
+            }
+            COMPRESSION_JPEG => {
+                let clamped: i32 = lvl.clamp(1, 100) as i32;
+                if TIFFSetField(tif_dst, TIFFTAG_JPEGQUALITY, clamped) == 0 {
+                    return Err(anyhow!("Failed to set JPEG quality"));
+                }
+            }
+            COMPRESSION_WEBP => {
+                let clamped: i32 = lvl.clamp(1, 100) as i32;
+                if TIFFSetField(tif_dst, TIFFTAG_WEBP_LEVEL, clamped) == 0 {
+                    return Err(anyhow!("Failed to set WebP quality"));
                 }
             }
             _ => {}
