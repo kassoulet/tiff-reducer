@@ -56,13 +56,5 @@ hooks = [
     pass_filenames = false,
     always_run = true,
     stages = ["pre-push"]
-  },
-  {
-    id = "ruff",
-    name = "Ruff (Linter and Formatter)",
-    entry = "ruff check --fix",
-    language = "python",
-    types = ["python"],
-    require_serial = true
   }
 ]

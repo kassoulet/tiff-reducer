@@ -86,7 +86,7 @@ python3 tests/generate_test_report.py -i tests/images -o tests/report
 Enforced via [prek](https://github.com/j178/prek).
 - **Setup:** `prek install`
 - **Manual Run:** `prek run --all-files`
-- **Included Hooks:** `cargo check`, `cargo clippy` (warnings as errors), `cargo fmt`, `cargo test`, `ruff` (for Python scripts).
+- **Included Hooks:** `cargo check`, `cargo clippy` (warnings as errors), `cargo fmt`, `cargo test`.
 
 ---
 

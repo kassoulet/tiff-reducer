@@ -264,7 +264,6 @@ prek install
 - `cargo clippy` - Rust linter (warnings as errors)
 - `cargo fmt` - Rust code formatting
 - `cargo test` - Rust integration tests (error handling)
-- `ruff` - Python linter and formatter
 
 **Manual run:**
 ```bash
