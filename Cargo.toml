@@ -11,7 +11,7 @@ keywords = ["tiff", "geotiff", "compression", "zstd", "optimization"]
 categories = ["command-line-utilities", "multimedia::images"]
 
 [dependencies]
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 indicatif = "0.17"
 rayon = "1.8"
 libc = "0.2"
