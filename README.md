@@ -29,10 +29,11 @@ A high-performance Rust CLI tool for optimizing TIFF files using high-efficiency
 
 ### Testing & Quality
 - **Rust Integration Tests**: 10/10 passing (compression, metadata, error handling, uncompressed format)
-- **Visual Regression**: GDAL-based pixel statistics comparison
+- **Visual Regression**: GDAL-based pixel statistics comparison and Rust reporting
 - **Fuzz Testing**: 18 malformed file scenarios for error handling
 - **Benchmark Mode**: `--benchmark` flag for timing/throughput metrics
 - **Dry-run Mode**: `--dry-run` flag for benchmarking without writing
+- **Visual Reports**: Automatic Markdown report generation with thumbnails
 
 ## Usage
 
@@ -175,33 +176,27 @@ After UPX:  1.3 MB (69% reduction)
 
 Test images are included locally in `tests/images/` directory (304 TIFF files).
 
-To run tests:
+To run all tests and generate a report:
 ```bash
-# Run Rust integration tests (recommended)
-cargo test --test integration_tests handling
-
-# Generate Markdown Test Report
-./tests/generate-report.sh
-
-# Generate report with custom options
-python3 tests/generate_test_report.py -i tests/images -o tests/report -n 20
-
-# View report
-cat tests/report/README.md
+# Run all tests (unit + integration) and generate report
+./scripts/run-tests.sh
 ```
 
-**Script Options:**
+**Runner Options:**
 ```bash
-./tests/generate-report.sh -n 50           # Process 50 images (default: all)
-./tests/generate-report.sh -f deflate -l 9 # Use Deflate compression
-./tests/generate-report.sh -o ./my-report  # Custom output directory
-./tests/generate-report.sh --help          # Show all options
+./scripts/run-tests.sh --help
+
+Options:
+  -f, --format FORMAT    Compression format for report (default: zstd)
+  -l, --level LEVEL      Compression level for report (default: 19)
+  -n, --limit NUM        Limit number of images in report (default: all)
+  -o, --output PATH      Output path for report (default: tests/README.md)
 ```
 
 **Markdown Report Features:**
 - Summary statistics (pass/fail counts and percentages)
-- Failure breakdown by error type
-- List of working images with thumbnails and compression ratios
+- Side-by-side thumbnail comparison (Original vs Compressed)
+- Performance metrics (throughput, average time)
 - List of failed images with error messages
 
 **Note:** Test images include various formats:

@@ -8,7 +8,7 @@ This document lists future features and known limitations to address in future r
 
 ### Completed in v0.3.1 (2026-03-22)
 - ✅ GeoTIFF metadata preservation (all 5 tags)
-- ✅ HTML visual test reports
+- ✅ Rust-based visual test reports with thumbnails
 - ✅ Tiled image processing
 - ✅ Multi-page TIFF support
 - ✅ BigTIFF support
@@ -278,6 +278,11 @@ See `SECURITY.md` for detailed findings and remediation status.
 ---
 
 ## Medium Priority
+
+### 10. CLI & User Experience
+- [ ] **Add `--lossy` mode**: Automatically select a lossy format (WebP or JPEG) for maximum size reduction when archival quality is not required.
+- [ ] **Interactive Mode**: Prompt for settings when run without arguments or with a `--interactive` flag.
+- [ ] **Configuration Files**: Support for `.tiff-reducer.toml` to save preferred settings per-project.
 
 ### 8. YCbCr Color Space Handling
 **Status:** ✅ **COMPLETED**
@@ -578,7 +583,7 @@ tests/report/
 - [ ] **Filter by status** (show only failures)
 - [ ] **Sort options** (by name, size, ratio, status)
 - [ ] **Download report** (ZIP with all thumbnails)
-- [ ] **Native Rust thumbnail generation** (remove GDAL dependency)
+- ✅ **Native Rust thumbnail generation** (completed in v0.3.2)
 
 ---
 
