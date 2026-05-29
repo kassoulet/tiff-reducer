@@ -650,7 +650,11 @@ fn test_compression(
         duration_ms,
         thumb_orig,
         thumb_comp,
-        codec: format!("{} (lvl {})", format, level),
+        codec: if lossy {
+            format!("lossy (lvl {})", level)
+        } else {
+            format!("{} (lvl {})", format, level)
+        },
     }
 }
 
