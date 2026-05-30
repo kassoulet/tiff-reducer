@@ -93,3 +93,44 @@ pub fn quantize_i16_to_u8(input: &[i16], output: &mut [u8]) {
         output[i] = normalized as u8;
     }
 }
+
+/// Quantize u16 to u8 using min-max normalization
+///
+/// # Safety
+/// - `output` buffer must be at least as long as `input`
+pub fn quantize_u16_to_u8(input: &[u16], output: &mut [u8]) {
+    if input.is_empty() {
+        return;
+    }
+
+    let mut min = u16::MAX;
+    let mut max = u16::MIN;
+
+    for &val in input {
+        if val < min {
+            min = val;
+        }
+        if val > max {
+            max = val;
+        }
+    }
+
+    // Handle case where all values are the same
+    if min == max {
+        for val in output {
+            *val = 0;
+        }
+        return;
+    }
+
+    let range = (max - min) as f32;
+    let scale = 255.0 / range;
+
+    for (i, &val) in input.iter().enumerate() {
+        if i >= output.len() {
+            break;
+        }
+        let normalized = ((val - min) as f32 * scale).clamp(0.0, 255.0);
+        output[i] = normalized as u8;
+    }
+}

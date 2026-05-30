@@ -457,6 +457,13 @@ fn process_single_file(
     let original_size = fs::metadata(input)?.len();
     let start_time = std::time::Instant::now();
 
+    // Get TIFF info to decide on quantization
+    let (_w, _h, bps, _spp, sample_format) = get_tiff_info(input)?;
+    let is_float = sample_format == SAMPLEFORMAT_IEEEFP;
+
+    // Automatically enable quantization for lossy mode if bps > 8
+    let quantize = quantize || (lossy && bps > 8);
+
     let formats = if extreme {
         vec![
             CompressionFormat::Uncompressed,
@@ -479,10 +486,6 @@ fn process_single_file(
     } else {
         level
     };
-
-    // Determine sample format to decide which predictors to test
-    let sample_format = get_sample_format(input)?;
-    let is_float = sample_format == SAMPLEFORMAT_IEEEFP;
 
     // Predictors to test (skip for lossy formats)
     let predictors = if extreme {
@@ -638,21 +641,34 @@ fn process_single_file(
     ))
 }
 
-/// Get the sample format of a TIFF file
-fn get_sample_format(path: &Path) -> Result<u16> {
+/// Get basic info about a TIFF file
+fn get_tiff_info(path: &Path) -> Result<(u32, u32, u16, u16, u16)> {
     let c_path = CString::new(path.to_str().ok_or_else(|| anyhow!("Invalid path"))?)?;
     unsafe {
         let tif = TIFFOpen(c_path.as_ptr(), CString::new("r")?.as_ptr());
         if tif.is_null() {
             return Err(anyhow!("Failed to open TIFF file: {:?}", path));
         }
+        let mut w: u32 = 0;
+        let mut h: u32 = 0;
+        let mut bps: u16 = 0;
+        let mut spp: u16 = 0;
         let mut fmt: u16 = 0;
+
+        TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &mut w);
+        TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &mut h);
+        if TIFFGetField(tif, TIFFTAG_BITSPERSAMPLE, &mut bps) == 0 {
+            bps = 8;
+        }
+        if TIFFGetField(tif, TIFFTAG_SAMPLESPERPIXEL, &mut spp) == 0 {
+            spp = 1;
+        }
         if TIFFGetField(tif, TIFFTAG_SAMPLEFORMAT, &mut fmt) == 0 {
-            // Tag not present, default to uint
             fmt = SAMPLEFORMAT_UINT;
         }
+
         TIFFClose(tif);
-        Ok(fmt)
+        Ok((w, h, bps, spp, fmt))
     }
 }
 
@@ -785,15 +801,21 @@ unsafe fn process_single_ifd(
         return Err(anyhow!("Failed to set image length"));
     }
 
-    // Preserve original image parameters
-    if TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, bps as u32) == 0 {
+    // Preserve original image parameters or quantize to 8-bit
+    let (target_bps, target_fmt) = if quantize {
+        (8u16, SAMPLEFORMAT_UINT)
+    } else {
+        (bps, fmt)
+    };
+
+    if TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, target_bps as u32) == 0 {
         return Err(anyhow!("Failed to set bits per sample"));
     }
     if TIFFSetField(tif_dst, TIFFTAG_SAMPLESPERPIXEL, spp as u32) == 0 {
         return Err(anyhow!("Failed to set samples per pixel"));
     }
-    if fmt != 0 {
-        if TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, fmt as u32) == 0 {
+    if target_fmt != 0 {
+        if TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, target_fmt as u32) == 0 {
             return Err(anyhow!("Failed to set sample format"));
         }
     }
@@ -994,6 +1016,11 @@ unsafe fn process_striped_image(
                 let slice_i16 =
                     std::slice::from_raw_parts(buf_in.as_ptr() as *const i16, actual_samples);
                 crate::quantize::quantize_i16_to_u8(slice_i16, &mut buf_out);
+            } else if bps == 16 && fmt == SAMPLEFORMAT_UINT {
+                let actual_samples = (in_scanline / 2).min((w * _spp as u32) as usize);
+                let slice_u16 =
+                    std::slice::from_raw_parts(buf_in.as_ptr() as *const u16, actual_samples);
+                crate::quantize::quantize_u16_to_u8(slice_u16, &mut buf_out);
             } else {
                 let take = buf_in.len().min(buf_out.len());
                 buf_out[..take].copy_from_slice(&buf_in[..take]);
