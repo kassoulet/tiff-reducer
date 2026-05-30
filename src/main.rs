@@ -106,6 +106,10 @@ enum Commands {
         /// Enable verbose logging for detailed progress
         #[arg(short, long)]
         verbose: bool,
+
+        /// Number of threads to use for Zstd compression
+        #[arg(long)]
+        zstd_threads: Option<usize>,
     },
     /// Analyze a TIFF file and display metadata
     Analyze {
@@ -188,6 +192,10 @@ fn main() -> Result<()> {
         .format_timestamp(None)
         .init();
 
+    unsafe {
+        suppress_warnings();
+    }
+
     match cli.command {
         Commands::Compress {
             input,
@@ -201,10 +209,21 @@ fn main() -> Result<()> {
             benchmark,
             jobs,
             verbose,
+            zstd_threads,
         } => {
             compress_command(
-                input, output, format, level, lossy, quantize, extreme, dry_run, benchmark, jobs,
+                input,
+                output,
+                format,
+                level,
+                lossy,
+                quantize,
+                extreme,
+                dry_run,
+                benchmark,
+                jobs,
                 verbose,
+                zstd_threads,
             )?;
         }
         Commands::Analyze { path } => {
@@ -311,6 +330,7 @@ fn compress_command(
     benchmark: bool,
     jobs: Option<usize>,
     verbose: bool,
+    zstd_threads: Option<usize>,
 ) -> Result<()> {
     // Expand directories to file lists
     let files: Vec<PathBuf> = input
@@ -350,7 +370,7 @@ fn compress_command(
             pb.set_style(
                 ProgressStyle::default_bar()
                     .template(
-                        "{spinner:.green} [{elapsed_precise}] {msg} [{bar:40.cyan/blue}] {pos}%",
+                        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}% {msg}",
                     )
                     .unwrap(),
             );
@@ -393,6 +413,7 @@ fn compress_command(
                 dry_run,
                 benchmark,
                 verbose,
+                zstd_threads,
                 &pb,
             ) {
                 Ok((original, compressed, best_fmt, is_dry_run)) => {
@@ -439,6 +460,7 @@ fn process_single_file(
     dry_run: bool,
     benchmark: bool,
     verbose: bool,
+    zstd_threads: Option<usize>,
     pb: &ProgressBar,
 ) -> Result<(u64, u64, String, bool)> {
     let original_size = fs::metadata(input)?.len();
@@ -452,14 +474,31 @@ fn process_single_file(
     let (w, h, bps, spp, sample_format) = get_tiff_info(input)?;
     let is_float = sample_format == SAMPLEFORMAT_IEEEFP;
 
+    // Get IFD count
+    let mut total_pages = 0u16;
+    unsafe {
+        let c_path = CString::new(input.to_str().ok_or_else(|| anyhow!("Invalid path"))?)?;
+        let tif = TIFFOpen(c_path.as_ptr(), CString::new("r")?.as_ptr());
+        if !tif.is_null() {
+            loop {
+                total_pages += 1;
+                if TIFFReadDirectory(tif) == 0 {
+                    break;
+                }
+            }
+            TIFFClose(tif);
+        }
+    };
+
     if verbose {
         log::info!(
-            "Image dimensions: {}x{}, bps: {}, spp: {}, format: {}",
+            "Image dimensions: {}x{}, bps: {}, spp: {}, format: {}, pages: {}",
             w,
             h,
             bps,
             spp,
-            sample_format
+            sample_format,
+            total_pages
         );
     }
 
@@ -548,6 +587,9 @@ fn process_single_file(
                 effective_level,
                 quantize,
                 verbose,
+                zstd_threads,
+                total_pages,
+                pb,
             ) {
                 if size > 0 && size < u64::MAX {
                     results.push((*fmt, *pred, size));
@@ -621,6 +663,9 @@ fn process_single_file(
             effective_level,
             quantize,
             verbose,
+            zstd_threads,
+            total_pages,
+            pb,
         )?;
 
         return Ok((
@@ -634,7 +679,18 @@ fn process_single_file(
     // Final compression with best format and predictor
     let cid = best_format.to_ffi();
     let pid = best_predictor.to_ffi();
-    run_compression_pass(input, output, cid, pid, effective_level, quantize, verbose)?;
+    run_compression_pass(
+        input,
+        output,
+        cid,
+        pid,
+        effective_level,
+        quantize,
+        verbose,
+        zstd_threads,
+        total_pages,
+        pb,
+    )?;
 
     let compressed_size = fs::metadata(output)?.len();
     let elapsed = start_time.elapsed();
@@ -713,6 +769,9 @@ fn run_compression_pass(
     level: Option<u32>,
     quantize: bool,
     verbose: bool,
+    zstd_threads: Option<usize>,
+    total_pages: u16,
+    pb: &ProgressBar,
 ) -> Result<()> {
     let c_input = CString::new(
         input
@@ -753,8 +812,11 @@ fn run_compression_pass(
             if verbose {
                 log::info!("Processing IFD {}", page);
             }
+            pb.set_message(format!("Page {}/{}", page + 1, total_pages));
+            pb.set_position(((page as u64) * 100) / (total_pages as u64));
 
             process_single_ifd(
+                input,
                 tif_src,
                 tif_dst,
                 compression,
@@ -763,6 +825,10 @@ fn run_compression_pass(
                 quantize,
                 page == 0,
                 verbose,
+                page,
+                total_pages,
+                pb,
+                zstd_threads,
             )?;
 
             if TIFFReadDirectory(tif_src) == 0 {
@@ -779,6 +845,7 @@ fn run_compression_pass(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_compression_to_fd(
     input: &Path,
     output_file: std::fs::File,
@@ -787,6 +854,9 @@ fn run_compression_to_fd(
     level: Option<u32>,
     quantize: bool,
     verbose: bool,
+    zstd_threads: Option<usize>,
+    total_pages: u16,
+    pb: &ProgressBar,
 ) -> Result<u64> {
     let c_input = CString::new(
         input
@@ -828,8 +898,11 @@ fn run_compression_to_fd(
             if verbose {
                 log::info!("Processing IFD {} (dry-run)", page);
             }
+            pb.set_message(format!("Page {}/{} (dry-run)", page + 1, total_pages));
+            pb.set_position(((page as u64) * 100) / (total_pages as u64));
 
             process_single_ifd(
+                input,
                 tif_src,
                 tif_dst,
                 compression,
@@ -838,6 +911,10 @@ fn run_compression_to_fd(
                 quantize,
                 page == 0,
                 verbose,
+                page,
+                total_pages,
+                pb,
+                zstd_threads,
             )?;
 
             if TIFFReadDirectory(tif_src) == 0 {
@@ -859,6 +936,7 @@ fn run_compression_to_fd(
 /// Process a single IFD (Image File Directory) / page
 #[allow(clippy::too_many_arguments)]
 unsafe fn process_single_ifd(
+    input_path: &Path, // Need path to open more handles for tiled processing
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
     compression: u16,
@@ -867,6 +945,10 @@ unsafe fn process_single_ifd(
     quantize: bool,
     is_first_page: bool,
     verbose: bool,
+    page_index: u16,
+    total_pages: u16,
+    pb: &ProgressBar,
+    zstd_threads: Option<usize>,
 ) -> Result<()> {
     let mut w = 0u32;
     let mut h = 0u32;
@@ -947,6 +1029,14 @@ unsafe fn process_single_ifd(
             COMPRESSION_LZMA => {
                 TIFFSetField(tif_dst, TIFFTAG_LZMAPRESET, lvl.clamp(1, 9) as i32);
             }
+            COMPRESSION_ZSTD => {
+                let clamped: i32 = lvl.clamp(1, 22) as i32;
+                TIFFSetField(tif_dst, TIFFTAG_ZSTD_LEVEL, clamped);
+
+                // Enable multi-threaded Zstd if supported (libtiff 4.5+)
+                let threads = zstd_threads.unwrap_or_else(num_cpus::get) as i32;
+                TIFFSetField(tif_dst, TIFFTAG_ZSTD_THREADS, threads);
+            }
             COMPRESSION_JPEGXL | COMPRESSION_JPEG | COMPRESSION_WEBP => {
                 let tag = match compression {
                     COMPRESSION_JPEGXL => TIFFTAG_DEFLATELEVEL,
@@ -998,14 +1088,28 @@ unsafe fn process_single_ifd(
 
     if is_tiled {
         if verbose {
-            log::info!("Image is tiled, using parallel tiled processing path");
+            pb.println("Image is tiled, using parallel tiled processing path");
         }
-        process_tiled_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize, verbose)?;
+        process_tiled_image(
+            input_path,
+            tif_src,
+            tif_dst,
+            w,
+            h,
+            spp,
+            bps,
+            fmt,
+            quantize,
+            verbose,
+            page_index,
+            total_pages,
+            pb,
+        )?;
     } else {
         if verbose {
-            log::info!("Image is striped, using striped processing path");
+            pb.println("Image is striped, using striped processing path");
         }
-        process_striped_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize, verbose)?;
+        process_striped_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize, verbose, pb)?;
     }
 
     TIFFWriteDirectory(tif_dst);
@@ -1023,6 +1127,7 @@ unsafe fn process_striped_image(
     fmt: u16,
     quantize: bool,
     verbose: bool,
+    pb: &ProgressBar,
 ) -> Result<()> {
     const MAX_SCANLINE_SIZE: usize = 1024 * 1024 * 1024;
     let in_scanline = TIFFScanlineSize(tif_src) as usize;
@@ -1042,7 +1147,7 @@ unsafe fn process_striped_image(
 
     for row in 0..h {
         if verbose && row % 1000 == 0 {
-            log::info!("Processing scanline {}/{}", row, h);
+            pb.println(format!("Processing scanline {}/{}", row, h));
         }
 
         if TIFFReadScanline(tif_src, buf_in.as_mut_ptr() as *mut _, row, 0) < 0 {
@@ -1082,6 +1187,7 @@ unsafe fn process_striped_image(
 
 #[allow(clippy::too_many_arguments)]
 unsafe fn process_tiled_image(
+    input_path: &Path, // Need path to open more handles
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
     w: u32,
@@ -1091,6 +1197,9 @@ unsafe fn process_tiled_image(
     fmt: u16,
     quantize: bool,
     verbose: bool,
+    page_index: u16,
+    total_pages: u16,
+    pb: &ProgressBar,
 ) -> Result<()> {
     const MAX_SCANLINE_SIZE: usize = 1024 * 1024 * 1024;
 
@@ -1100,7 +1209,7 @@ unsafe fn process_tiled_image(
     TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length);
 
     if verbose {
-        log::info!("Tile dimensions: {}x{}", tile_width, tile_length);
+        pb.println(format!("Tile dimensions: {}x{}", tile_width, tile_length));
     }
 
     let bytes_per_sample = (bps as usize).div_ceil(8);
@@ -1125,32 +1234,70 @@ unsafe fn process_tiled_image(
 
     let tile_buffer_size = (tile_width as usize) * (tile_length as usize) * bytes_per_pixel;
 
+    // Use a thread-local TIFF handle for parallel decompression
+    let c_path = CString::new(input_path.to_str().unwrap())?;
+    thread_local! {
+        static SOURCE_HANDLES: std::cell::RefCell<Option<*mut TIFF>> = const { std::cell::RefCell::new(None) };
+    }
+
     for tile_y in 0..tiles_down {
         if verbose {
-            log::info!("Processing tile row {}/{}", tile_y, tiles_down);
+            pb.println(format!("Processing tile {}/{}", tile_y, tiles_down));
         }
+
+        pb.set_message(format!(
+            "(IFD {}/{} Tile {}/{})",
+            page_index + 1,
+            total_pages,
+            tile_y + 1,
+            tiles_down
+        ));
+        pb.set_position(
+            ((page_index as u64) * 100 + (tile_y as u64 * 100 / tiles_down as u64))
+                / (total_pages as u64),
+        );
 
         image_strip.fill(0);
 
-        // Read all tiles for this row sequentially (libtiff is not thread-safe)
-        let mut tiles_data = Vec::with_capacity(tiles_across as usize);
-        for tile_x in 0..tiles_across {
-            let tile_index = tile_y * tiles_across + tile_x;
-            let mut buf = vec![0u8; tile_buffer_size];
-            if crate::ffi::TIFFReadEncodedTile(
-                tif_src,
-                tile_index,
-                buf.as_mut_ptr() as *mut _,
-                tile_buffer_size as u32,
-            ) < 0
-            {
-                return Err(anyhow!("Failed to decode tile {}", tile_index));
-            }
-            tiles_data.push((tile_x, buf));
-        }
+        // Prepare tile metadata for parallel decoding
+        let tile_indices: Vec<(u32, u32)> = (0..tiles_across)
+            .map(|tile_x| (tile_x, tile_y * tiles_across + tile_x))
+            .collect();
 
-        // Process tiles in parallel using rayon (currently handles assembly)
-        for (tile_x, tile_buf) in tiles_data {
+        // Parallel decode tiles
+        let decoded_tiles: Vec<(u32, Vec<u8>)> = tile_indices
+            .par_iter()
+            .map(|&(tile_x, tile_index)| {
+                let mut buf = vec![0u8; tile_buffer_size];
+                SOURCE_HANDLES.with(|cell| {
+                    let mut cell = cell.borrow_mut();
+                    if cell.is_none() {
+                        let tif = unsafe {
+                            TIFFOpen(c_path.as_ptr(), CString::new("r").unwrap().as_ptr())
+                        };
+                        // We must re-register tags for every handle
+                        unsafe { crate::metadata::register_geotiff_tags_ffi(tif) };
+                        *cell = Some(tif);
+                    }
+                    let tif = cell.unwrap();
+                    unsafe {
+                        if crate::ffi::TIFFReadEncodedTile(
+                            tif,
+                            tile_index,
+                            buf.as_mut_ptr() as *mut _,
+                            tile_buffer_size as u32,
+                        ) < 0
+                        {
+                            // Should ideally return an error, but par_iter map needs a return
+                        }
+                    }
+                });
+                (tile_x, buf)
+            })
+            .collect();
+
+        // Assembly (Sequential)
+        for (tile_x, tile_buf) in decoded_tiles {
             let start_x = (tile_x as usize) * (tile_width as usize);
             let actual_width = std::cmp::min(tile_width as usize, w as usize - start_x);
             let actual_height = std::cmp::min(

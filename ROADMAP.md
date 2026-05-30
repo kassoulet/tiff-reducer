@@ -292,6 +292,8 @@ See `SECURITY.md` for detailed findings and remediation status.
 
 ### 10. CLI & User Experience
 - ✅ **Add `--lossy` mode**: Automatically benchmark WebP and JPEG and pick smallest result. (Completed in v0.4.0)
+- [ ] **Display current IFD/tile progress ("IFD (x/y) Tile (x/y)")**
+- [ ] **Add Zstd threads option for compression**
 - [ ] **Add `--lossy` mode tests**: Implement dedicated integration tests and a 'Lossy Optimization' section in the Markdown test report.
 - [ ] **Interactive Mode**: Prompt for settings when run without arguments or with a `--interactive` flag.
 - [ ] **Configuration Files**: Support for `.tiff-reducer.toml` to save preferred settings per-project.

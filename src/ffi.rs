@@ -155,6 +155,7 @@ pub const PREDICTOR_FLOATINGPOINT: u16 = 3;
 
 // Compression level tags (libtiff 4.7+)
 pub const TIFFTAG_ZSTD_LEVEL: u32 = 65564; // ZSTD compression level
+pub const TIFFTAG_ZSTD_THREADS: u32 = 65565; // ZSTD compression threads
 pub const TIFFTAG_DEFLATELEVEL: u32 = 320; // Deflate compression level
 pub const TIFFTAG_LZMAPRESET: u32 = 34926; // LZMA preset level
 pub const TIFFTAG_JPEGQUALITY: u32 = 65537; // JPEG quality
