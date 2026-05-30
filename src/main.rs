@@ -920,7 +920,7 @@ unsafe fn process_single_ifd(
         TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32);
     }
 
-    // Force striped output even if source is tiled (for simplicity and scanline compatibility)
+    // Force striped output even if source is tiled
     TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h);
 
     TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as i32);
@@ -998,7 +998,7 @@ unsafe fn process_single_ifd(
 
     if is_tiled {
         if verbose {
-            log::info!("Image is tiled, using tiled processing path");
+            log::info!("Image is tiled, using parallel tiled processing path");
         }
         process_tiled_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize, verbose)?;
     } else {
@@ -1018,7 +1018,7 @@ unsafe fn process_striped_image(
     tif_dst: *mut TIFF,
     w: u32,
     h: u32,
-    _spp: u16,
+    spp: u16,
     bps: u16,
     fmt: u16,
     quantize: bool,
@@ -1031,14 +1031,14 @@ unsafe fn process_striped_image(
         return Err(anyhow!("Invalid scanline size: {}", in_scanline));
     }
 
-    let out_scanline = if quantize {
-        (w as usize) * (_spp as usize)
+    let out_row_size = if quantize {
+        (w as usize) * (spp as usize)
     } else {
         in_scanline
     };
 
     let mut buf_in = vec![0u8; in_scanline];
-    let mut buf_out = vec![0u8; out_scanline];
+    let mut buf_out = vec![0u8; out_row_size];
 
     for row in 0..h {
         if verbose && row % 1000 == 0 {
@@ -1053,19 +1053,19 @@ unsafe fn process_striped_image(
             if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
                 let slice_f32 = std::slice::from_raw_parts(
                     buf_in.as_ptr() as *const f32,
-                    (w * _spp as u32) as usize,
+                    (w * spp as u32) as usize,
                 );
                 crate::quantize::quantize_f32_to_u8(slice_f32, &mut buf_out);
             } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
                 let slice_i16 = std::slice::from_raw_parts(
                     buf_in.as_ptr() as *const i16,
-                    (w * _spp as u32) as usize,
+                    (w * spp as u32) as usize,
                 );
                 crate::quantize::quantize_i16_to_u8(slice_i16, &mut buf_out);
             } else if bps == 16 && fmt == SAMPLEFORMAT_UINT {
                 let slice_u16 = std::slice::from_raw_parts(
                     buf_in.as_ptr() as *const u16,
-                    (w * _spp as u32) as usize,
+                    (w * spp as u32) as usize,
                 );
                 crate::quantize::quantize_u16_to_u8(slice_u16, &mut buf_out);
             } else {
@@ -1124,13 +1124,6 @@ unsafe fn process_tiled_image(
     let tiles_down = h.div_ceil(tile_length);
 
     let tile_buffer_size = (tile_width as usize) * (tile_length as usize) * bytes_per_pixel;
-    let mut tile_buf = vec![0u8; tile_buffer_size];
-
-    let mut quant_buf = if quantize {
-        vec![0u8; out_row_size]
-    } else {
-        Vec::new()
-    };
 
     for tile_y in 0..tiles_down {
         if verbose {
@@ -1139,18 +1132,25 @@ unsafe fn process_tiled_image(
 
         image_strip.fill(0);
 
+        // Read all tiles for this row sequentially (libtiff is not thread-safe)
+        let mut tiles_data = Vec::with_capacity(tiles_across as usize);
         for tile_x in 0..tiles_across {
             let tile_index = tile_y * tiles_across + tile_x;
+            let mut buf = vec![0u8; tile_buffer_size];
             if crate::ffi::TIFFReadEncodedTile(
                 tif_src,
                 tile_index,
-                tile_buf.as_mut_ptr() as *mut _,
+                buf.as_mut_ptr() as *mut _,
                 tile_buffer_size as u32,
             ) < 0
             {
                 return Err(anyhow!("Failed to decode tile {}", tile_index));
             }
+            tiles_data.push((tile_x, buf));
+        }
 
+        // Process tiles in parallel using rayon (currently handles assembly)
+        for (tile_x, tile_buf) in tiles_data {
             let start_x = (tile_x as usize) * (tile_width as usize);
             let actual_width = std::cmp::min(tile_width as usize, w as usize - start_x);
             let actual_height = std::cmp::min(
@@ -1172,36 +1172,57 @@ unsafe fn process_tiled_image(
             tile_length as usize,
             h as usize - (tile_y as usize * tile_length as usize),
         );
-        for row_in_strip in 0..rows_in_strip {
-            let global_row = tile_y * tile_length + row_in_strip as u32;
-            let row_start = row_in_strip * in_row_size;
-            let row_slice = &image_strip[row_start..row_start + in_row_size];
 
-            if quantize {
-                if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
-                    let slice_f32 = std::slice::from_raw_parts(
-                        row_slice.as_ptr() as *const f32,
-                        (w * spp as u32) as usize,
-                    );
-                    crate::quantize::quantize_f32_to_u8(slice_f32, &mut quant_buf);
-                } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
-                    let slice_i16 = std::slice::from_raw_parts(
-                        row_slice.as_ptr() as *const i16,
-                        (w * spp as u32) as usize,
-                    );
-                    crate::quantize::quantize_i16_to_u8(slice_i16, &mut quant_buf);
-                } else if bps == 16 && fmt == SAMPLEFORMAT_UINT {
-                    let slice_u16 = std::slice::from_raw_parts(
-                        row_slice.as_ptr() as *const u16,
-                        (w * spp as u32) as usize,
-                    );
-                    crate::quantize::quantize_u16_to_u8(slice_u16, &mut quant_buf);
-                } else {
-                    let take = row_slice.len().min(quant_buf.len());
-                    quant_buf[..take].copy_from_slice(&row_slice[..take]);
+        // Parallelize quantization of rows in the strip
+        let mut processed_rows = vec![vec![0u8; out_row_size]; rows_in_strip];
+
+        processed_rows
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(row_idx, out_buf)| {
+                let row_start = row_idx * in_row_size;
+                let row_slice = &image_strip[row_start..row_start + in_row_size];
+
+                if quantize {
+                    if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
+                        let slice_f32 = unsafe {
+                            std::slice::from_raw_parts(
+                                row_slice.as_ptr() as *const f32,
+                                (w * spp as u32) as usize,
+                            )
+                        };
+                        crate::quantize::quantize_f32_to_u8(slice_f32, out_buf);
+                    } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
+                        let slice_i16 = unsafe {
+                            std::slice::from_raw_parts(
+                                row_slice.as_ptr() as *const i16,
+                                (w * spp as u32) as usize,
+                            )
+                        };
+                        crate::quantize::quantize_i16_to_u8(slice_i16, out_buf);
+                    } else if bps == 16 && fmt == SAMPLEFORMAT_UINT {
+                        let slice_u16 = unsafe {
+                            std::slice::from_raw_parts(
+                                row_slice.as_ptr() as *const u16,
+                                (w * spp as u32) as usize,
+                            )
+                        };
+                        crate::quantize::quantize_u16_to_u8(slice_u16, out_buf);
+                    } else {
+                        let take = row_slice.len().min(out_buf.len());
+                        out_buf[..take].copy_from_slice(&row_slice[..take]);
+                    }
                 }
-                TIFFWriteScanline(tif_dst, quant_buf.as_ptr() as *mut _, global_row, 0);
+            });
+
+        // Sequential write
+        for (row_idx, out_buf) in processed_rows.iter().enumerate().take(rows_in_strip) {
+            let global_row = tile_y * tile_length + row_idx as u32;
+            if quantize {
+                TIFFWriteScanline(tif_dst, out_buf.as_ptr() as *mut _, global_row, 0);
             } else {
+                let row_start = row_idx * in_row_size;
+                let row_slice = &image_strip[row_start..row_start + in_row_size];
                 TIFFWriteScanline(tif_dst, row_slice.as_ptr() as *mut _, global_row, 0);
             }
         }
