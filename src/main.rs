@@ -102,6 +102,10 @@ enum Commands {
         /// Number of parallel jobs (default: number of CPUs)
         #[arg(short, long)]
         jobs: Option<usize>,
+
+        /// Enable verbose logging for detailed progress
+        #[arg(short, long)]
+        verbose: bool,
     },
     /// Analyze a TIFF file and display metadata
     Analyze {
@@ -170,8 +174,19 @@ impl Predictor {
 }
 
 fn main() -> Result<()> {
-    env_logger::init();
     let cli = Cli::parse();
+
+    // Initialize logger based on verbose flag
+    let log_level = match &cli.command {
+        Commands::Compress { verbose, .. } if *verbose => log::LevelFilter::Info,
+        _ => log::LevelFilter::Warn,
+    };
+
+    env_logger::Builder::new()
+        .filter_level(log_level)
+        .format_target(false)
+        .format_timestamp(None)
+        .init();
 
     match cli.command {
         Commands::Compress {
@@ -185,9 +200,11 @@ fn main() -> Result<()> {
             dry_run,
             benchmark,
             jobs,
+            verbose,
         } => {
             compress_command(
                 input, output, format, level, lossy, quantize, extreme, dry_run, benchmark, jobs,
+                verbose,
             )?;
         }
         Commands::Analyze { path } => {
@@ -293,6 +310,7 @@ fn compress_command(
     dry_run: bool,
     benchmark: bool,
     jobs: Option<usize>,
+    verbose: bool,
 ) -> Result<()> {
     // Expand directories to file lists
     let files: Vec<PathBuf> = input
@@ -374,6 +392,7 @@ fn compress_command(
                 extreme,
                 dry_run,
                 benchmark,
+                verbose,
                 &pb,
             ) {
                 Ok((original, compressed, best_fmt, is_dry_run)) => {
@@ -419,14 +438,30 @@ fn process_single_file(
     extreme: bool,
     dry_run: bool,
     benchmark: bool,
+    verbose: bool,
     pb: &ProgressBar,
 ) -> Result<(u64, u64, String, bool)> {
     let original_size = fs::metadata(input)?.len();
     let start_time = std::time::Instant::now();
 
+    if verbose {
+        log::info!("Starting processing of {:?}", input);
+    }
+
     // Get TIFF info to decide on quantization
-    let (_w, _h, bps, _spp, sample_format) = get_tiff_info(input)?;
+    let (w, h, bps, spp, sample_format) = get_tiff_info(input)?;
     let is_float = sample_format == SAMPLEFORMAT_IEEEFP;
+
+    if verbose {
+        log::info!(
+            "Image dimensions: {}x{}, bps: {}, spp: {}, format: {}",
+            w,
+            h,
+            bps,
+            spp,
+            sample_format
+        );
+    }
 
     // Automatically enable quantization for lossy mode if bps > 8
     let quantize = quantize || (lossy && bps > 8);
@@ -505,9 +540,15 @@ fn process_single_file(
             let pid = pred.to_ffi();
 
             // Only add to results if compression actually succeeded
-            if let Ok(size) =
-                run_compression_to_fd(input, temp_file, cid, pid, effective_level, quantize)
-            {
+            if let Ok(size) = run_compression_to_fd(
+                input,
+                temp_file,
+                cid,
+                pid,
+                effective_level,
+                quantize,
+                verbose,
+            ) {
                 if size > 0 && size < u64::MAX {
                     results.push((*fmt, *pred, size));
                     if size < best_size {
@@ -572,8 +613,15 @@ fn process_single_file(
         let cid = best_format.to_ffi();
         let pid = best_predictor.to_ffi();
 
-        let dry_run_size =
-            run_compression_to_fd(input, temp_file, cid, pid, effective_level, quantize)?;
+        let dry_run_size = run_compression_to_fd(
+            input,
+            temp_file,
+            cid,
+            pid,
+            effective_level,
+            quantize,
+            verbose,
+        )?;
 
         return Ok((
             original_size,
@@ -586,7 +634,7 @@ fn process_single_file(
     // Final compression with best format and predictor
     let cid = best_format.to_ffi();
     let pid = best_predictor.to_ffi();
-    run_compression_pass(input, output, cid, pid, effective_level, quantize)?;
+    run_compression_pass(input, output, cid, pid, effective_level, quantize, verbose)?;
 
     let compressed_size = fs::metadata(output)?.len();
     let elapsed = start_time.elapsed();
@@ -664,6 +712,7 @@ fn run_compression_pass(
     predictor: u16,
     level: Option<u32>,
     quantize: bool,
+    verbose: bool,
 ) -> Result<()> {
     let c_input = CString::new(
         input
@@ -701,6 +750,10 @@ fn run_compression_pass(
 
         let mut page = 0;
         loop {
+            if verbose {
+                log::info!("Processing IFD {}", page);
+            }
+
             process_single_ifd(
                 tif_src,
                 tif_dst,
@@ -709,6 +762,7 @@ fn run_compression_pass(
                 level,
                 quantize,
                 page == 0,
+                verbose,
             )?;
 
             if TIFFReadDirectory(tif_src) == 0 {
@@ -732,6 +786,7 @@ fn run_compression_to_fd(
     predictor: u16,
     level: Option<u32>,
     quantize: bool,
+    verbose: bool,
 ) -> Result<u64> {
     let c_input = CString::new(
         input
@@ -770,6 +825,10 @@ fn run_compression_to_fd(
 
         let mut page = 0;
         loop {
+            if verbose {
+                log::info!("Processing IFD {} (dry-run)", page);
+            }
+
             process_single_ifd(
                 tif_src,
                 tif_dst,
@@ -778,6 +837,7 @@ fn run_compression_to_fd(
                 level,
                 quantize,
                 page == 0,
+                verbose,
             )?;
 
             if TIFFReadDirectory(tif_src) == 0 {
@@ -806,6 +866,7 @@ unsafe fn process_single_ifd(
     level: Option<u32>,
     quantize: bool,
     is_first_page: bool,
+    verbose: bool,
 ) -> Result<()> {
     let mut w = 0u32;
     let mut h = 0u32;
@@ -936,9 +997,15 @@ unsafe fn process_single_ifd(
     }
 
     if is_tiled {
-        process_tiled_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize)?;
+        if verbose {
+            log::info!("Image is tiled, using tiled processing path");
+        }
+        process_tiled_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize, verbose)?;
     } else {
-        process_striped_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize)?;
+        if verbose {
+            log::info!("Image is striped, using striped processing path");
+        }
+        process_striped_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize, verbose)?;
     }
 
     TIFFWriteDirectory(tif_dst);
@@ -955,6 +1022,7 @@ unsafe fn process_striped_image(
     bps: u16,
     fmt: u16,
     quantize: bool,
+    verbose: bool,
 ) -> Result<()> {
     const MAX_SCANLINE_SIZE: usize = 1024 * 1024 * 1024;
     let in_scanline = TIFFScanlineSize(tif_src) as usize;
@@ -973,6 +1041,10 @@ unsafe fn process_striped_image(
     let mut buf_out = vec![0u8; out_scanline];
 
     for row in 0..h {
+        if verbose && row % 1000 == 0 {
+            log::info!("Processing scanline {}/{}", row, h);
+        }
+
         if TIFFReadScanline(tif_src, buf_in.as_mut_ptr() as *mut _, row, 0) < 0 {
             return Err(anyhow!("Failed to read scanline {}", row));
         }
@@ -1018,6 +1090,7 @@ unsafe fn process_tiled_image(
     bps: u16,
     fmt: u16,
     quantize: bool,
+    verbose: bool,
 ) -> Result<()> {
     const MAX_SCANLINE_SIZE: usize = 1024 * 1024 * 1024;
 
@@ -1025,6 +1098,10 @@ unsafe fn process_tiled_image(
     let mut tile_length: u32 = 0;
     TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width);
     TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length);
+
+    if verbose {
+        log::info!("Tile dimensions: {}x{}", tile_width, tile_length);
+    }
 
     let bytes_per_sample = (bps as usize).div_ceil(8);
     let bytes_per_pixel = bytes_per_sample * (spp as usize);
@@ -1056,6 +1133,10 @@ unsafe fn process_tiled_image(
     };
 
     for tile_y in 0..tiles_down {
+        if verbose {
+            log::info!("Processing tile row {}/{}", tile_y, tiles_down);
+        }
+
         image_strip.fill(0);
 
         for tile_x in 0..tiles_across {
