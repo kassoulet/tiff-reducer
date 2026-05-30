@@ -12,6 +12,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::ffi::CString;
 use std::fs;
+use std::os::unix::io::AsRawFd;
 use std::path::{Component, Path, PathBuf};
 
 /// Sanitize a filename to prevent path traversal attacks
@@ -98,33 +99,54 @@ enum Commands {
         #[arg(long)]
         benchmark: bool,
 
-        /// Number of parallel jobs for file-level processing (default: number of CPUs)
+        /// Number of parallel jobs (default: number of CPUs)
         #[arg(short, long)]
         jobs: Option<usize>,
     },
     /// Analyze a TIFF file and display metadata
     Analyze {
-        /// TIFF file to analyze
-        file: PathBuf,
+        /// Input TIFF file
+        #[arg(required = true)]
+        path: PathBuf,
     },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 enum CompressionFormat {
+    Uncompressed,
+    Deflate,
     Zstd,
     Lzma,
     Lzw,
-    Deflate,
+    Packbits,
     Jpeg,
     Webp,
-    Lerc,
-    LercDeflate,
-    LercZstd,
     JpegXl,
-    Uncompressed,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+impl std::fmt::Display for CompressionFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl CompressionFormat {
+    fn to_ffi(self) -> u16 {
+        match self {
+            CompressionFormat::Uncompressed => COMPRESSION_NONE,
+            CompressionFormat::Deflate => COMPRESSION_ADOBE_DEFLATE,
+            CompressionFormat::Zstd => COMPRESSION_ZSTD,
+            CompressionFormat::Lzma => COMPRESSION_LZMA,
+            CompressionFormat::Lzw => COMPRESSION_LZW,
+            CompressionFormat::Packbits => COMPRESSION_PACKBITS,
+            CompressionFormat::Jpeg => COMPRESSION_JPEG,
+            CompressionFormat::Webp => COMPRESSION_WEBP,
+            CompressionFormat::JpegXl => COMPRESSION_JPEGXL,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Predictor {
     None,
     Horizontal,
@@ -133,17 +155,12 @@ enum Predictor {
 
 impl std::fmt::Display for Predictor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Predictor::None => write!(f, "None"),
-            Predictor::Horizontal => write!(f, "Horizontal"),
-            Predictor::FloatingPoint => write!(f, "Float"),
-        }
+        write!(f, "{:?}", self)
     }
 }
 
 impl Predictor {
-    #[allow(clippy::wrong_self_convention)]
-    fn to_ffi(&self) -> u16 {
+    fn to_ffi(self) -> u16 {
         match self {
             Predictor::None => PREDICTOR_NONE,
             Predictor::Horizontal => PREDICTOR_HORIZONTAL,
@@ -152,55 +169,11 @@ impl Predictor {
     }
 }
 
-impl std::fmt::Display for CompressionFormat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CompressionFormat::Zstd => write!(f, "Zstd"),
-            CompressionFormat::Lzma => write!(f, "LZMA"),
-            CompressionFormat::Lzw => write!(f, "LZW"),
-            CompressionFormat::Deflate => write!(f, "Deflate"),
-            CompressionFormat::Jpeg => write!(f, "JPEG"),
-            CompressionFormat::Webp => write!(f, "WebP"),
-            CompressionFormat::Lerc => write!(f, "LERC"),
-            CompressionFormat::LercDeflate => write!(f, "LERC-Deflate"),
-            CompressionFormat::LercZstd => write!(f, "LERC-Zstd"),
-            CompressionFormat::JpegXl => write!(f, "JPEG-XL"),
-            CompressionFormat::Uncompressed => write!(f, "Uncompressed"),
-        }
-    }
-}
-
-impl CompressionFormat {
-    #[allow(clippy::wrong_self_convention)]
-    fn to_ffi(&self) -> u16 {
-        match self {
-            CompressionFormat::Zstd => COMPRESSION_ZSTD,
-            CompressionFormat::Lzma => COMPRESSION_LZMA,
-            CompressionFormat::Lzw => COMPRESSION_LZW,
-            CompressionFormat::Deflate => COMPRESSION_ADOBE_DEFLATE,
-            CompressionFormat::Jpeg => COMPRESSION_JPEG,
-            CompressionFormat::Webp => COMPRESSION_WEBP,
-            CompressionFormat::Lerc => COMPRESSION_LERC,
-            CompressionFormat::LercDeflate => COMPRESSION_LERC_DEFLATE,
-            CompressionFormat::LercZstd => COMPRESSION_LERC_ZSTD,
-            CompressionFormat::JpegXl => COMPRESSION_JPEGXL,
-            CompressionFormat::Uncompressed => COMPRESSION_NONE,
-        }
-    }
-}
-
 fn main() -> Result<()> {
     env_logger::init();
-
-    // Suppress libtiff warnings for unknown tags (GeoTIFF tags)
-    unsafe {
-        crate::ffi::suppress_warnings();
-    }
-
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Analyze { file } => analyze_file(&file),
         Commands::Compress {
             input,
             output,
@@ -212,39 +185,25 @@ fn main() -> Result<()> {
             dry_run,
             benchmark,
             jobs,
-        } => compress_command(
-            input, output, format, level, lossy, quantize, extreme, dry_run, benchmark, jobs,
-        ),
+        } => {
+            compress_command(
+                input, output, format, level, lossy, quantize, extreme, dry_run, benchmark, jobs,
+            )?;
+        }
+        Commands::Analyze { path } => {
+            analyze_command(&path)?;
+        }
     }
+
+    Ok(())
 }
 
-fn compression_name(code: u16) -> &'static str {
-    match code {
-        COMPRESSION_NONE => "Uncompressed",
-        COMPRESSION_LZW => "LZW",
-        COMPRESSION_JPEG => "JPEG",
-        COMPRESSION_ADOBE_DEFLATE => "Deflate",
-        COMPRESSION_LZMA => "LZMA",
-        COMPRESSION_ZSTD => "Zstd",
-        COMPRESSION_WEBP => "WebP",
-        COMPRESSION_LERC => "LERC",
-        COMPRESSION_LERC_DEFLATE => "LERC-Deflate",
-        COMPRESSION_LERC_ZSTD => "LERC-Zstd",
-        COMPRESSION_JPEGXL => "JPEG-XL",
-        _ => "Unknown",
-    }
-}
-
-fn analyze_file(path: &Path) -> Result<()> {
-    if !path.exists() {
-        return Err(anyhow!("File not found: {:?}", path));
-    }
-
+fn analyze_command(path: &Path) -> Result<()> {
     let c_path = CString::new(path.to_str().ok_or_else(|| anyhow!("Invalid path"))?)?;
     unsafe {
         let tif = TIFFOpen(c_path.as_ptr(), CString::new("r")?.as_ptr());
         if tif.is_null() {
-            return Err(anyhow!("Failed to open TIFF"));
+            return Err(anyhow!("Failed to open TIFF file: {:?}", path));
         }
 
         let mut w = 0u32;
@@ -305,6 +264,23 @@ fn analyze_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn compression_name(comp: u16) -> &'static str {
+    match comp {
+        COMPRESSION_NONE => "Uncompressed",
+        c if c == COMPRESSION_ADOBE_DEFLATE || c == COMPRESSION_DEFLATE => "Deflate",
+        COMPRESSION_ZSTD => "Zstd",
+        COMPRESSION_LZMA => "LZMA",
+        COMPRESSION_LZW => "LZW",
+        COMPRESSION_PACKBITS => "PackBits",
+        COMPRESSION_JPEG => "JPEG",
+        COMPRESSION_WEBP => "WebP",
+        COMPRESSION_JPEGXL => "JPEG-XL",
+        COMPRESSION_CCITTFAX3 => "CCITT Group 3",
+        COMPRESSION_CCITTFAX4 => "CCITT Group 4",
+        _ => "Unknown",
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn compress_command(
     input: Vec<PathBuf>,
@@ -318,24 +294,21 @@ fn compress_command(
     benchmark: bool,
     jobs: Option<usize>,
 ) -> Result<()> {
-    // Collect all files from input paths (files and directories)
+    // Expand directories to file lists
     let files: Vec<PathBuf> = input
         .iter()
         .flat_map(|path| {
             if path.is_dir() {
                 fs::read_dir(path)
-                    .ok()
-                    .map(|entries| {
-                        entries
-                            .filter_map(|e| e.ok())
-                            .map(|e| e.path())
-                            .filter(|p| {
-                                p.extension()
-                                    .is_some_and(|ext| ext == "tif" || ext == "tiff")
-                            })
-                            .collect::<Vec<_>>()
+                    .unwrap()
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        p.extension().is_some_and(|ext| {
+                            ext == "tif" || ext == "tiff" || ext == "TIF" || ext == "TIFF"
+                        })
                     })
-                    .unwrap_or_default()
+                    .collect()
             } else {
                 vec![path.clone()]
             }
@@ -393,6 +366,7 @@ fn compress_command(
             match process_single_file(
                 file_path,
                 &target_output,
+                output.is_some(),
                 format,
                 level,
                 lossy,
@@ -402,41 +376,21 @@ fn compress_command(
                 benchmark,
                 &pb,
             ) {
-                Ok((original, compressed, best_fmt)) => {
-                    pb.set_position(100);
-                    pb.finish_with_message("Done");
-
-                    if !extreme {
-                        // Display compression result (only if not extreme, since extreme shows its own results)
+                Ok((original, compressed, best_fmt, is_dry_run)) => {
+                    pb.finish();
+                    if !extreme && !lossy {
                         let ratio = if original > 0 {
                             (1.0 - (compressed as f64 / original as f64)) * 100.0
                         } else {
                             0.0
                         };
                         println!(
-                            "[{}] {} -> {} bytes ({:.1}% reduction, {})",
+                            "\n[{}] {}: {} -> {} bytes ({:.1}% reduction, {})",
                             file_path
                                 .file_name()
                                 .unwrap_or(file_path.as_os_str())
                                 .to_string_lossy(),
-                            original,
-                            compressed,
-                            ratio,
-                            best_fmt
-                        );
-                    } else {
-                        // In extreme mode, show final result
-                        let ratio = if original > 0 {
-                            (1.0 - (compressed as f64 / original as f64)) * 100.0
-                        } else {
-                            0.0
-                        };
-                        println!(
-                            "\n[{}] Final: {} -> {} bytes ({:.1}% reduction, {})",
-                            file_path
-                                .file_name()
-                                .unwrap_or(file_path.as_os_str())
-                                .to_string_lossy(),
+                            if is_dry_run { "Dry-run" } else { "Final" },
                             original,
                             compressed,
                             ratio,
@@ -457,6 +411,7 @@ fn compress_command(
 fn process_single_file(
     input: &Path,
     output: &Path,
+    has_explicit_output: bool,
     format: CompressionFormat,
     level: Option<u32>,
     lossy: bool,
@@ -465,7 +420,7 @@ fn process_single_file(
     dry_run: bool,
     benchmark: bool,
     pb: &ProgressBar,
-) -> Result<(u64, u64, String)> {
+) -> Result<(u64, u64, String, bool)> {
     let original_size = fs::metadata(input)?.len();
     let start_time = std::time::Instant::now();
 
@@ -545,13 +500,14 @@ fn process_single_file(
 
         let total = combinations.len();
         for (i, (fmt, pred)) in combinations.iter().enumerate() {
-            let temp_out = input.with_extension(format!("tmp_{:?}_{}", fmt, i));
+            let temp_file = tempfile::tempfile()?;
             let cid = fmt.to_ffi();
             let pid = pred.to_ffi();
 
             // Only add to results if compression actually succeeded
-            if run_compression_pass(input, &temp_out, cid, pid, effective_level, quantize).is_ok() {
-                let size = temp_out.metadata().map(|m| m.len()).unwrap_or(u64::MAX);
+            if let Ok(size) =
+                run_compression_to_fd(input, temp_file, cid, pid, effective_level, quantize)
+            {
                 if size > 0 && size < u64::MAX {
                     results.push((*fmt, *pred, size));
                     if size < best_size {
@@ -560,7 +516,6 @@ fn process_single_file(
                         best_predictor = *pred;
                     }
                 }
-                let _ = fs::remove_file(temp_out);
             }
 
             // Update progress
@@ -609,7 +564,23 @@ fn process_single_file(
     }
 
     if dry_run {
-        return Ok((original_size, 0, format!("{best_format}+{best_predictor}")));
+        if has_explicit_output {
+            pb.println("Warning: --output is ignored when using --dry-run");
+        }
+
+        let temp_file = tempfile::tempfile()?;
+        let cid = best_format.to_ffi();
+        let pid = best_predictor.to_ffi();
+
+        let dry_run_size =
+            run_compression_to_fd(input, temp_file, cid, pid, effective_level, quantize)?;
+
+        return Ok((
+            original_size,
+            dry_run_size,
+            format!("{best_format}+{best_predictor}"),
+            true,
+        ));
     }
 
     // Final compression with best format and predictor
@@ -650,6 +621,7 @@ fn process_single_file(
         original_size,
         compressed_size,
         format!("{best_format}+{best_predictor}"),
+        false,
     ))
 }
 
@@ -723,9 +695,7 @@ fn run_compression_pass(
             return Err(anyhow!("Failed to open destination TIFF"));
         }
 
-        // Register GeoTIFF tags on both source and destination handles.
-        // For the source, this ensures TIFFGetField knows the types for these tags.
-        // For the destination, it allows writing them correctly.
+        // Register GeoTIFF tags on both handles
         crate::metadata::register_geotiff_tags_ffi(tif_src);
         crate::metadata::register_geotiff_tags_ffi(tif_dst);
 
@@ -753,6 +723,77 @@ fn run_compression_pass(
         fs::rename(tmp_path, output)?;
     }
     Ok(())
+}
+
+fn run_compression_to_fd(
+    input: &Path,
+    output_file: std::fs::File,
+    compression: u16,
+    predictor: u16,
+    level: Option<u32>,
+    quantize: bool,
+) -> Result<u64> {
+    let c_input = CString::new(
+        input
+            .to_str()
+            .ok_or_else(|| anyhow!("Invalid input path"))?,
+    )?;
+
+    unsafe {
+        let tif_src = TIFFOpen(c_input.as_ptr(), CString::new("r")?.as_ptr());
+        if tif_src.is_null() {
+            return Err(anyhow!("Failed to open source TIFF"));
+        }
+
+        let mode_str = if input.metadata()?.len() > 4 * 1024 * 1024 * 1024 {
+            "w8"
+        } else {
+            "w"
+        };
+
+        // Use libc::dup to avoid ownership issues with TIFFFdOpen/TIFFClose
+        let fd = libc::dup(output_file.as_raw_fd());
+        let tif_dst = TIFFFdOpen(
+            fd,
+            CString::new("dry_run")?.as_ptr(),
+            CString::new(mode_str)?.as_ptr(),
+        );
+
+        if tif_dst.is_null() {
+            libc::close(fd);
+            TIFFClose(tif_src);
+            return Err(anyhow!("Failed to open destination TIFF (FD)"));
+        }
+
+        crate::metadata::register_geotiff_tags_ffi(tif_src);
+        crate::metadata::register_geotiff_tags_ffi(tif_dst);
+
+        let mut page = 0;
+        loop {
+            process_single_ifd(
+                tif_src,
+                tif_dst,
+                compression,
+                predictor,
+                level,
+                quantize,
+                page == 0,
+            )?;
+
+            if TIFFReadDirectory(tif_src) == 0 {
+                break;
+            }
+            page += 1;
+        }
+
+        TIFFClose(tif_src);
+        TIFFClose(tif_dst); // This will close the dup'd FD
+
+        use std::io::{Seek, SeekFrom};
+        let mut f = output_file;
+        let size = f.seek(SeekFrom::End(0))?;
+        Ok(size)
+    }
 }
 
 /// Process a single IFD (Image File Directory) / page
@@ -787,143 +828,77 @@ unsafe fn process_single_ifd(
     TIFFGetField(tif_src, TIFFTAG_PHOTOMETRIC, &mut photometric);
     TIFFGetField(tif_src, TIFFTAG_PLANARCONFIG, &mut planar);
 
-    // Handle invalid/missing samples per pixel
     if spp == 0 {
-        spp = 1; // Default to 1 sample per pixel
+        spp = 1;
     }
-
-    // Handle missing photometric (default to minisblack for grayscale)
     if photometric == 0 {
         photometric = PHOTOMETRIC_MINISBLACK;
     }
-
-    // Handle missing planar config (default to contiguous)
     if planar == 0 {
         planar = PLANARCONFIG_CONTIG;
     }
 
-    // Check if source is tiled before we start processing
     let is_tiled = crate::ffi::TIFFIsTiled(tif_src) != 0;
 
-    // Set required tags for this IFD (image structure)
-    if TIFFSetField(tif_dst, TIFFTAG_IMAGEWIDTH, w) == 0 {
-        return Err(anyhow!("Failed to set image width"));
-    }
-    if TIFFSetField(tif_dst, TIFFTAG_IMAGELENGTH, h) == 0 {
-        return Err(anyhow!("Failed to set image length"));
-    }
+    TIFFSetField(tif_dst, TIFFTAG_IMAGEWIDTH, w);
+    TIFFSetField(tif_dst, TIFFTAG_IMAGELENGTH, h);
 
-    // Preserve original image parameters or quantize to 8-bit
     let (target_bps, target_fmt) = if quantize {
         (8u16, SAMPLEFORMAT_UINT)
     } else {
         (bps, fmt)
     };
 
-    if TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, target_bps as u32) == 0 {
-        return Err(anyhow!("Failed to set bits per sample"));
-    }
-    if TIFFSetField(tif_dst, TIFFTAG_SAMPLESPERPIXEL, spp as u32) == 0 {
-        return Err(anyhow!("Failed to set samples per pixel"));
-    }
+    TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, target_bps as u32);
+    TIFFSetField(tif_dst, TIFFTAG_SAMPLESPERPIXEL, spp as u32);
     if target_fmt != 0 {
-        if TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, target_fmt as u32) == 0 {
-            return Err(anyhow!("Failed to set sample format"));
-        }
+        TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, target_fmt as u32);
     }
-    if TIFFSetField(tif_dst, TIFFTAG_PHOTOMETRIC, photometric as u32) == 0 {
-        return Err(anyhow!("Failed to set photometric interpretation"));
-    }
-    // Only set PLANARCONFIG if source had it and spp > 1 (multi-sample)
-    // For single-sample images, libtiff expects PLANARCONFIG_CONTIG
+    TIFFSetField(tif_dst, TIFFTAG_PHOTOMETRIC, photometric as u32);
     if planar != 0 && spp > 1 {
-        if TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32) == 0 {
-            return Err(anyhow!("Failed to set planar configuration"));
-        }
+        TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32);
     }
 
-    // For tiled images, preserve the tiled format; otherwise use strips
-    if is_tiled {
-        let mut tile_width: u32 = 0;
-        let mut tile_length: u32 = 0;
-        TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width);
-        TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length);
-    }
+    // Force striped output even if source is tiled (for simplicity and scanline compatibility)
+    TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h);
 
-    if TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h) == 0 {
-        return Err(anyhow!("Failed to set rows per strip"));
-    }
+    TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as i32);
 
-    // Set compression AFTER image structure but BEFORE metadata copying
-    // Cast to i32 as required for variadic FFI functions (libtiff expects uint16_vap which is int)
-    if TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as i32) == 0 {
-        return Err(anyhow!("Failed to set compression codec"));
-    }
-
-    // Resolution tags (optional but commonly present)
     let mut xres: f32 = 0.0;
     let mut yres: f32 = 0.0;
     let mut resunit: u16 = 0;
     if TIFFGetField(tif_src, TIFFTAG_XRESOLUTION, &mut xres) != 0 {
-        if TIFFSetField(tif_dst, TIFFTAG_XRESOLUTION, xres as f64) == 0 {
-            return Err(anyhow!("Failed to set X resolution"));
-        }
+        TIFFSetField(tif_dst, TIFFTAG_XRESOLUTION, xres as f64);
     }
     if TIFFGetField(tif_src, TIFFTAG_YRESOLUTION, &mut yres) != 0 {
-        if TIFFSetField(tif_dst, TIFFTAG_YRESOLUTION, yres as f64) == 0 {
-            return Err(anyhow!("Failed to set Y resolution"));
-        }
+        TIFFSetField(tif_dst, TIFFTAG_YRESOLUTION, yres as f64);
     }
     if TIFFGetField(tif_src, TIFFTAG_RESOLUTIONUNIT, &mut resunit) != 0 {
-        if TIFFSetField(tif_dst, TIFFTAG_RESOLUTIONUNIT, resunit as u32) == 0 {
-            return Err(anyhow!("Failed to set resolution unit"));
-        }
+        TIFFSetField(tif_dst, TIFFTAG_RESOLUTIONUNIT, resunit as u32);
     }
 
-    // Clone metadata from source to destination (GeoTIFF, ICC, alpha, etc.)
-    // Only for first page to avoid duplicating file-level metadata
     if is_first_page {
         clone_metadata(tif_src, tif_dst)?;
     }
 
-    // Set compression level for supported codecs with input validation
     if let Some(lvl) = level {
-        // Validate compression level to prevent potential issues
-        if lvl > 10000 {
-            return Err(anyhow!("Compression level too large: {}", lvl));
-        }
-
         match compression {
             COMPRESSION_LZMA => {
-                let clamped: i32 = lvl.clamp(1, 9) as i32;
-                if TIFFSetField(tif_dst, TIFFTAG_LZMAPRESET, clamped) == 0 {
-                    return Err(anyhow!("Failed to set LZMA preset"));
-                }
+                TIFFSetField(tif_dst, TIFFTAG_LZMAPRESET, lvl.clamp(1, 9) as i32);
             }
-            COMPRESSION_JPEGXL => {
-                let clamped: i32 = lvl.clamp(1, 100) as i32;
-                if TIFFSetField(tif_dst, TIFFTAG_DEFLATELEVEL, clamped) == 0 {
-                    return Err(anyhow!("Failed to set Deflate level"));
-                }
-            }
-            COMPRESSION_JPEG => {
-                let clamped: i32 = lvl.clamp(1, 100) as i32;
-                if TIFFSetField(tif_dst, TIFFTAG_JPEGQUALITY, clamped) == 0 {
-                    return Err(anyhow!("Failed to set JPEG quality"));
-                }
-            }
-            COMPRESSION_WEBP => {
-                let clamped: i32 = lvl.clamp(1, 100) as i32;
-                if TIFFSetField(tif_dst, TIFFTAG_WEBP_LEVEL, clamped) == 0 {
-                    return Err(anyhow!("Failed to set WebP quality"));
-                }
+            COMPRESSION_JPEGXL | COMPRESSION_JPEG | COMPRESSION_WEBP => {
+                let tag = match compression {
+                    COMPRESSION_JPEGXL => TIFFTAG_DEFLATELEVEL,
+                    COMPRESSION_JPEG => TIFFTAG_JPEGQUALITY,
+                    COMPRESSION_WEBP => TIFFTAG_WEBP_LEVEL,
+                    _ => unreachable!(),
+                };
+                TIFFSetField(tif_dst, tag, lvl.clamp(1, 100) as i32);
             }
             _ => {}
         }
     }
 
-    // Validate predictor for bit depth and sample format
-    // Predictors only work with certain compression formats (LZW, Deflate, Zstd, LZMA, etc.)
     let final_predictor = if matches!(
         compression,
         COMPRESSION_LZW
@@ -934,7 +909,6 @@ unsafe fn process_single_ifd(
     ) {
         match requested_predictor {
             PREDICTOR_HORIZONTAL => {
-                // Horizontal predictor works with 8, 16, and 32-bit integer samples
                 if (bps == 8 || bps == 16 || bps == 32)
                     && (fmt == SAMPLEFORMAT_UINT || fmt == SAMPLEFORMAT_INT)
                 {
@@ -944,8 +918,6 @@ unsafe fn process_single_ifd(
                 }
             }
             PREDICTOR_FLOATINGPOINT => {
-                // Floating point predictor only works with IEEE floating point samples
-                // Supported bit depths: 16 (half), 24, 32 (single), 64 (double)
                 if fmt == SAMPLEFORMAT_IEEEFP && (bps == 16 || bps == 24 || bps == 32 || bps == 64)
                 {
                     PREDICTOR_FLOATINGPOINT
@@ -959,23 +931,17 @@ unsafe fn process_single_ifd(
         PREDICTOR_NONE
     };
 
-    // Set predictor (compression was already set earlier)
     if final_predictor != PREDICTOR_NONE {
-        if TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, final_predictor as u32) == 0 {
-            return Err(anyhow!("Failed to set predictor"));
-        }
+        TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, final_predictor as u32);
     }
 
-    // Write image data
     if is_tiled {
         process_tiled_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize)?;
     } else {
         process_striped_image(tif_src, tif_dst, w, h, spp, bps, fmt, quantize)?;
     }
 
-    if TIFFWriteDirectory(tif_dst) == 0 {
-        return Err(anyhow!("Failed to write directory"));
-    }
+    TIFFWriteDirectory(tif_dst);
     Ok(())
 }
 
@@ -990,21 +956,15 @@ unsafe fn process_striped_image(
     fmt: u16,
     quantize: bool,
 ) -> Result<()> {
-    // Maximum scanline size to prevent memory exhaustion (1GB limit)
     const MAX_SCANLINE_SIZE: usize = 1024 * 1024 * 1024;
-
     let in_scanline = TIFFScanlineSize(tif_src) as usize;
 
-    // Validate scanline size to prevent buffer overflow
     if in_scanline == 0 || in_scanline > MAX_SCANLINE_SIZE {
         return Err(anyhow!("Invalid scanline size: {}", in_scanline));
     }
 
-    // Check for multiplication overflow when calculating output scanline
     let out_scanline = if quantize {
-        w.checked_mul(_spp as u32)
-            .and_then(|s| s.try_into().ok())
-            .ok_or_else(|| anyhow!("Invalid image dimensions - overflow"))?
+        (w as usize) * (_spp as usize)
     } else {
         in_scanline
     };
@@ -1019,29 +979,30 @@ unsafe fn process_striped_image(
 
         if quantize {
             if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
-                let actual_samples = (in_scanline / 4).min((w * _spp as u32) as usize);
-                let slice_f32 =
-                    std::slice::from_raw_parts(buf_in.as_ptr() as *const f32, actual_samples);
+                let slice_f32 = std::slice::from_raw_parts(
+                    buf_in.as_ptr() as *const f32,
+                    (w * _spp as u32) as usize,
+                );
                 crate::quantize::quantize_f32_to_u8(slice_f32, &mut buf_out);
             } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
-                let actual_samples = (in_scanline / 2).min((w * _spp as u32) as usize);
-                let slice_i16 =
-                    std::slice::from_raw_parts(buf_in.as_ptr() as *const i16, actual_samples);
+                let slice_i16 = std::slice::from_raw_parts(
+                    buf_in.as_ptr() as *const i16,
+                    (w * _spp as u32) as usize,
+                );
                 crate::quantize::quantize_i16_to_u8(slice_i16, &mut buf_out);
             } else if bps == 16 && fmt == SAMPLEFORMAT_UINT {
-                let actual_samples = (in_scanline / 2).min((w * _spp as u32) as usize);
-                let slice_u16 =
-                    std::slice::from_raw_parts(buf_in.as_ptr() as *const u16, actual_samples);
+                let slice_u16 = std::slice::from_raw_parts(
+                    buf_in.as_ptr() as *const u16,
+                    (w * _spp as u32) as usize,
+                );
                 crate::quantize::quantize_u16_to_u8(slice_u16, &mut buf_out);
             } else {
                 let take = buf_in.len().min(buf_out.len());
                 buf_out[..take].copy_from_slice(&buf_in[..take]);
             }
-            if TIFFWriteScanline(tif_dst, buf_out.as_ptr() as *mut _, row, 0) < 0 {
-                return Err(anyhow!("Failed to write scanline {}", row));
-            }
-        } else if TIFFWriteScanline(tif_dst, buf_in.as_ptr() as *mut _, row, 0) < 0 {
-            return Err(anyhow!("Failed to write scanline {}", row));
+            TIFFWriteScanline(tif_dst, buf_out.as_ptr() as *mut _, row, 0);
+        } else {
+            TIFFWriteScanline(tif_dst, buf_in.as_ptr() as *mut _, row, 0);
         }
     }
     Ok(())
@@ -1058,93 +1019,58 @@ unsafe fn process_tiled_image(
     fmt: u16,
     quantize: bool,
 ) -> Result<()> {
-    // Maximum scanline size to prevent memory exhaustion (1GB limit)
     const MAX_SCANLINE_SIZE: usize = 1024 * 1024 * 1024;
 
-    // Get tile dimensions
     let mut tile_width: u32 = 0;
     let mut tile_length: u32 = 0;
-    if TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width) == 0
-        || TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length) == 0
-    {
-        return Err(anyhow!("Failed to read tile dimensions"));
-    }
+    TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width);
+    TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length);
 
-    // Calculate bytes per pixel and row size
     let bytes_per_sample = (bps as usize).div_ceil(8);
-    let bytes_per_pixel = bytes_per_sample
-        .checked_mul(spp as usize)
-        .ok_or_else(|| anyhow!("Bytes per pixel overflow"))?;
-    let in_row_size = (w as usize)
-        .checked_mul(bytes_per_pixel)
-        .ok_or_else(|| anyhow!("Input row size overflow"))?;
+    let bytes_per_pixel = bytes_per_sample * (spp as usize);
+    let in_row_size = (w as usize) * bytes_per_pixel;
 
     if in_row_size > MAX_SCANLINE_SIZE {
-        return Err(anyhow!("Input row size too large: {} bytes", in_row_size));
+        return Err(anyhow!("Input row size too large"));
     }
 
     let out_row_size = if quantize {
-        (w as usize)
-            .checked_mul(spp as usize)
-            .ok_or_else(|| anyhow!("Output row size overflow"))?
+        (w as usize) * (spp as usize)
     } else {
         in_row_size
     };
 
-    if out_row_size > MAX_SCANLINE_SIZE {
-        return Err(anyhow!("Output row size too large: {} bytes", out_row_size));
-    }
-
-    // Allocate buffer for one tile row of the image
-    let tile_row_height = tile_length as usize;
-    let image_strip_size = in_row_size
-        .checked_mul(tile_row_height)
-        .ok_or_else(|| anyhow!("Image strip size overflow"))?;
+    let image_strip_size = in_row_size * (tile_length as usize);
     let mut image_strip = vec![0u8; image_strip_size];
 
     let tiles_across = w.div_ceil(tile_width);
     let tiles_down = h.div_ceil(tile_length);
 
-    let tile_buffer_size = (tile_width as usize)
-        .checked_mul(tile_length as usize)
-        .and_then(|s| s.checked_mul(bytes_per_pixel))
-        .ok_or_else(|| anyhow!("Tile buffer size overflow"))?;
+    let tile_buffer_size = (tile_width as usize) * (tile_length as usize) * bytes_per_pixel;
     let mut tile_buf = vec![0u8; tile_buffer_size];
 
-    // Buffers for quantization
     let mut quant_buf = if quantize {
         vec![0u8; out_row_size]
     } else {
         Vec::new()
     };
 
-    // Process one tile row at a time
     for tile_y in 0..tiles_down {
-        // Clear the image strip for the next set of tiles
         image_strip.fill(0);
 
         for tile_x in 0..tiles_across {
             let tile_index = tile_y * tiles_across + tile_x;
-
-            let read_size = crate::ffi::TIFFReadEncodedTile(
+            if crate::ffi::TIFFReadEncodedTile(
                 tif_src,
                 tile_index,
                 tile_buf.as_mut_ptr() as *mut _,
                 tile_buffer_size as u32,
-            );
-
-            if read_size < 0 {
-                return Err(anyhow!(
-                    "Failed to decode tile {} at ({}, {})",
-                    tile_index,
-                    tile_x,
-                    tile_y
-                ));
+            ) < 0
+            {
+                return Err(anyhow!("Failed to decode tile {}", tile_index));
             }
 
             let start_x = (tile_x as usize) * (tile_width as usize);
-            let start_y_in_strip = 0; // Relative to the current strip
-
             let actual_width = std::cmp::min(tile_width as usize, w as usize - start_x);
             let actual_height = std::cmp::min(
                 tile_length as usize,
@@ -1154,16 +1080,13 @@ unsafe fn process_tiled_image(
             let src_tile_row_size = (tile_width as usize) * bytes_per_pixel;
             for row in 0..actual_height {
                 let src_start = row * src_tile_row_size;
-                let dst_start =
-                    (start_y_in_strip + row) * in_row_size + (start_x * bytes_per_pixel);
+                let dst_start = row * in_row_size + (start_x * bytes_per_pixel);
                 let copy_len = actual_width * bytes_per_pixel;
-
                 image_strip[dst_start..dst_start + copy_len]
                     .copy_from_slice(&tile_buf[src_start..src_start + copy_len]);
             }
         }
 
-        // Write the current strip of scanlines to the destination
         let rows_in_strip = std::cmp::min(
             tile_length as usize,
             h as usize - (tile_y as usize * tile_length as usize),
@@ -1196,14 +1119,11 @@ unsafe fn process_tiled_image(
                     let take = row_slice.len().min(quant_buf.len());
                     quant_buf[..take].copy_from_slice(&row_slice[..take]);
                 }
-                if TIFFWriteScanline(tif_dst, quant_buf.as_ptr() as *mut _, global_row, 0) < 0 {
-                    return Err(anyhow!("Failed to write scanline {}", global_row));
-                }
-            } else if TIFFWriteScanline(tif_dst, row_slice.as_ptr() as *mut _, global_row, 0) < 0 {
-                return Err(anyhow!("Failed to write scanline {}", global_row));
+                TIFFWriteScanline(tif_dst, quant_buf.as_ptr() as *mut _, global_row, 0);
+            } else {
+                TIFFWriteScanline(tif_dst, row_slice.as_ptr() as *mut _, global_row, 0);
             }
         }
     }
-
     Ok(())
 }

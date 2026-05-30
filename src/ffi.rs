@@ -21,6 +21,7 @@ pub struct TIFFFieldInfo {
 #[link(name = "tiff")]
 extern "C" {
     pub fn TIFFOpen(name: *const c_char, mode: *const c_char) -> *mut TIFF;
+    pub fn TIFFFdOpen(fd: c_int, name: *const c_char, mode: *const c_char) -> *mut TIFF;
     pub fn TIFFClose(tif: *mut TIFF);
 
     pub fn TIFFGetField(tif: *mut TIFF, tag: u32, ...) -> c_int;
@@ -133,9 +134,13 @@ pub const FIELD_CUSTOM: u16 = 65;
 // Compression types
 #[allow(dead_code)]
 pub const COMPRESSION_NONE: u16 = 1;
+pub const COMPRESSION_CCITTFAX3: u16 = 3;
+pub const COMPRESSION_CCITTFAX4: u16 = 4;
 pub const COMPRESSION_LZW: u16 = 5;
 pub const COMPRESSION_JPEG: u16 = 7;
 pub const COMPRESSION_ADOBE_DEFLATE: u16 = 8;
+pub const COMPRESSION_PACKBITS: u16 = 32773;
+pub const COMPRESSION_DEFLATE: u16 = 32946;
 pub const COMPRESSION_LZMA: u16 = 34925;
 pub const COMPRESSION_ZSTD: u16 = 50000;
 pub const COMPRESSION_WEBP: u16 = 50001;
