@@ -10,3 +10,4 @@ tests/images/*.tif
 tests/images/*.tif
 
 .aider*
+*.tmp_tiffreducer
