@@ -290,9 +290,13 @@ fn analyze_file(path: &Path) -> Result<()> {
         println!(
             "Layout: {}",
             if crate::ffi::TIFFIsTiled(tif) != 0 {
-                "Tiled"
+                let mut tw: u32 = 0;
+                let mut th: u32 = 0;
+                TIFFGetField(tif, TIFFTAG_TILEWIDTH, &mut tw);
+                TIFFGetField(tif, TIFFTAG_TILELENGTH, &mut th);
+                format!("Tiled ({}x{})", tw, th)
             } else {
-                "Striped"
+                "Striped".to_string()
             }
         );
 
