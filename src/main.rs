@@ -287,6 +287,14 @@ fn analyze_file(path: &Path) -> Result<()> {
             }
         );
         println!("Compression: {} ({})", compression_name(comp), comp);
+        println!(
+            "Layout: {}",
+            if crate::ffi::TIFFIsTiled(tif) != 0 {
+                "Tiled"
+            } else {
+                "Striped"
+            }
+        );
 
         TIFFClose(tif);
     }
@@ -1043,14 +1051,11 @@ unsafe fn process_tiled_image(
     h: u32,
     spp: u16,
     bps: u16,
-    _fmt: u16,
-    _quantize: bool,
+    fmt: u16,
+    quantize: bool,
 ) -> Result<()> {
-    // For tiled images, we use libtiff's built-in tile reading
-    // and convert to scanlines for writing
-
-    // Maximum image size to prevent memory exhaustion (4GB limit)
-    const MAX_IMAGE_SIZE: usize = 4 * 1024 * 1024 * 1024;
+    // Maximum scanline size to prevent memory exhaustion (1GB limit)
+    const MAX_SCANLINE_SIZE: usize = 1024 * 1024 * 1024;
 
     // Get tile dimensions
     let mut tile_width: u32 = 0;
@@ -1061,43 +1066,62 @@ unsafe fn process_tiled_image(
         return Err(anyhow!("Failed to read tile dimensions"));
     }
 
-    // Calculate bytes per pixel and row size with overflow checking
+    // Calculate bytes per pixel and row size
     let bytes_per_sample = (bps as usize).div_ceil(8);
     let bytes_per_pixel = bytes_per_sample
         .checked_mul(spp as usize)
         .ok_or_else(|| anyhow!("Bytes per pixel overflow"))?;
-    let row_size = (w as usize)
+    let in_row_size = (w as usize)
         .checked_mul(bytes_per_pixel)
-        .ok_or_else(|| anyhow!("Row size overflow"))?;
+        .ok_or_else(|| anyhow!("Input row size overflow"))?;
 
-    // Check total image size
-    let total_size = row_size
-        .checked_mul(h as usize)
-        .ok_or_else(|| anyhow!("Image size overflow"))?;
-    if total_size > MAX_IMAGE_SIZE {
-        return Err(anyhow!("Image too large: {} bytes", total_size));
+    if in_row_size > MAX_SCANLINE_SIZE {
+        return Err(anyhow!("Input row size too large: {} bytes", in_row_size));
     }
 
-    // Create output buffer for all scanlines
-    let mut image_data = vec![0u8; total_size];
+    let out_row_size = if quantize {
+        (w as usize)
+            .checked_mul(spp as usize)
+            .ok_or_else(|| anyhow!("Output row size overflow"))?
+    } else {
+        in_row_size
+    };
 
-    // Calculate number of tiles with overflow checking
+    if out_row_size > MAX_SCANLINE_SIZE {
+        return Err(anyhow!("Output row size too large: {} bytes", out_row_size));
+    }
+
+    // Allocate buffer for one tile row of the image
+    let tile_row_height = tile_length as usize;
+    let image_strip_size = in_row_size
+        .checked_mul(tile_row_height)
+        .ok_or_else(|| anyhow!("Image strip size overflow"))?;
+    let mut image_strip = vec![0u8; image_strip_size];
+
     let tiles_across = w.div_ceil(tile_width);
     let tiles_down = h.div_ceil(tile_length);
 
-    // Get tile size for buffer allocation with overflow checking
     let tile_buffer_size = (tile_width as usize)
         .checked_mul(tile_length as usize)
         .and_then(|s| s.checked_mul(bytes_per_pixel))
         .ok_or_else(|| anyhow!("Tile buffer size overflow"))?;
     let mut tile_buf = vec![0u8; tile_buffer_size];
 
-    // Read each tile and place in output buffer
+    // Buffers for quantization
+    let mut quant_buf = if quantize {
+        vec![0u8; out_row_size]
+    } else {
+        Vec::new()
+    };
+
+    // Process one tile row at a time
     for tile_y in 0..tiles_down {
+        // Clear the image strip for the next set of tiles
+        image_strip.fill(0);
+
         for tile_x in 0..tiles_across {
             let tile_index = tile_y * tiles_across + tile_x;
 
-            // Read encoded tile (automatically decompresses)
             let read_size = crate::ffi::TIFFReadEncodedTile(
                 tif_src,
                 tile_index,
@@ -1114,58 +1138,66 @@ unsafe fn process_tiled_image(
                 ));
             }
 
-            // Calculate tile position in image with overflow checking
-            let start_x = (tile_x as usize)
-                .checked_mul(tile_width as usize)
-                .ok_or_else(|| anyhow!("Tile position overflow"))?;
-            let start_y = (tile_y as usize)
-                .checked_mul(tile_length as usize)
-                .ok_or_else(|| anyhow!("Tile position overflow"))?;
+            let start_x = (tile_x as usize) * (tile_width as usize);
+            let start_y_in_strip = 0; // Relative to the current strip
 
-            // Calculate actual tile dimensions (edge tiles may be smaller)
             let actual_width = std::cmp::min(tile_width as usize, w as usize - start_x);
-            let actual_height = std::cmp::min(tile_length as usize, h as usize - start_y);
+            let actual_height = std::cmp::min(
+                tile_length as usize,
+                h as usize - (tile_y as usize * tile_length as usize),
+            );
 
-            // Copy tile data to image buffer row by row with bounds checking
-            let src_row_size = actual_width
-                .checked_mul(bytes_per_pixel)
-                .ok_or_else(|| anyhow!("Source row size overflow"))?;
+            let src_tile_row_size = (tile_width as usize) * bytes_per_pixel;
             for row in 0..actual_height {
-                let src_start = row
-                    .checked_mul(src_row_size)
-                    .ok_or_else(|| anyhow!("Source start overflow"))?;
-                if src_start >= tile_buf.len() {
-                    continue; // Skip if source is out of bounds
-                }
+                let src_start = row * src_tile_row_size;
+                let dst_start =
+                    (start_y_in_strip + row) * in_row_size + (start_x * bytes_per_pixel);
+                let copy_len = actual_width * bytes_per_pixel;
 
-                let dst_start = (start_y
-                    .checked_add(row)
-                    .ok_or_else(|| anyhow!("Destination start overflow"))?)
-                .checked_mul(row_size)
-                .and_then(|s| s.checked_add(start_x.checked_mul(bytes_per_pixel)?))
-                .ok_or_else(|| anyhow!("Destination start overflow"))?;
-
-                let remaining_buf = tile_buf
-                    .len()
-                    .checked_sub(src_start)
-                    .ok_or_else(|| anyhow!("Buffer underflow"))?;
-                let copy_len = src_row_size.min(remaining_buf);
-
-                if let Some(end) = dst_start.checked_add(copy_len) {
-                    if end <= image_data.len() {
-                        image_data[dst_start..end]
-                            .copy_from_slice(&tile_buf[src_start..src_start + copy_len]);
-                    }
-                }
+                image_strip[dst_start..dst_start + copy_len]
+                    .copy_from_slice(&tile_buf[src_start..src_start + copy_len]);
             }
         }
-    }
 
-    // Write all scanlines to destination
-    for row in 0..h {
-        let row_start = (row as usize) * row_size;
-        if TIFFWriteScanline(tif_dst, image_data[row_start..].as_ptr() as *mut _, row, 0) < 0 {
-            return Err(anyhow!("Failed to write scanline {}", row));
+        // Write the current strip of scanlines to the destination
+        let rows_in_strip = std::cmp::min(
+            tile_length as usize,
+            h as usize - (tile_y as usize * tile_length as usize),
+        );
+        for row_in_strip in 0..rows_in_strip {
+            let global_row = tile_y * tile_length + row_in_strip as u32;
+            let row_start = row_in_strip * in_row_size;
+            let row_slice = &image_strip[row_start..row_start + in_row_size];
+
+            if quantize {
+                if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
+                    let slice_f32 = std::slice::from_raw_parts(
+                        row_slice.as_ptr() as *const f32,
+                        (w * spp as u32) as usize,
+                    );
+                    crate::quantize::quantize_f32_to_u8(slice_f32, &mut quant_buf);
+                } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
+                    let slice_i16 = std::slice::from_raw_parts(
+                        row_slice.as_ptr() as *const i16,
+                        (w * spp as u32) as usize,
+                    );
+                    crate::quantize::quantize_i16_to_u8(slice_i16, &mut quant_buf);
+                } else if bps == 16 && fmt == SAMPLEFORMAT_UINT {
+                    let slice_u16 = std::slice::from_raw_parts(
+                        row_slice.as_ptr() as *const u16,
+                        (w * spp as u32) as usize,
+                    );
+                    crate::quantize::quantize_u16_to_u8(slice_u16, &mut quant_buf);
+                } else {
+                    let take = row_slice.len().min(quant_buf.len());
+                    quant_buf[..take].copy_from_slice(&row_slice[..take]);
+                }
+                if TIFFWriteScanline(tif_dst, quant_buf.as_ptr() as *mut _, global_row, 0) < 0 {
+                    return Err(anyhow!("Failed to write scanline {}", global_row));
+                }
+            } else if TIFFWriteScanline(tif_dst, row_slice.as_ptr() as *mut _, global_row, 0) < 0 {
+                return Err(anyhow!("Failed to write scanline {}", global_row));
+            }
         }
     }
 
