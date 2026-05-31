@@ -83,6 +83,7 @@ pub const TIFFTAG_PHOTOMETRIC: u32 = 262;
 pub const TIFFTAG_ROWSPERSTRIP: u32 = 278;
 pub const TIFFTAG_SAMPLESPERPIXEL: u32 = 277;
 pub const TIFFTAG_PLANARCONFIG: u32 = 284;
+pub const TIFFTAG_FILLORDER: u32 = 266;
 
 // PlanarConfig values
 pub const PLANARCONFIG_CONTIG: u16 = 1;
@@ -99,6 +100,13 @@ pub const TIFFTAG_SMINSAMPLEVALUE: u32 = 340;
 pub const TIFFTAG_EXTRASAMPLES: u32 = 338;
 pub const TIFFTAG_ICCPROFILE: u32 = 34675;
 pub const TIFFTAG_IMAGEDESCRIPTION: u32 = 270;
+pub const TIFFTAG_MAKE: u32 = 271;
+pub const TIFFTAG_MODEL: u32 = 272;
+pub const TIFFTAG_ORIENTATION: u32 = 274;
+pub const TIFFTAG_SOFTWARE: u32 = 305;
+pub const TIFFTAG_DATETIME: u32 = 306;
+pub const TIFFTAG_ARTIST: u32 = 315;
+pub const TIFFTAG_COPYRIGHT: u32 = 33432;
 
 // ExtraSamples values - for reference
 #[allow(dead_code)]

@@ -943,7 +943,7 @@ unsafe fn process_single_ifd(
     requested_predictor: u16,
     level: Option<u32>,
     quantize: bool,
-    is_first_page: bool,
+    _is_first_page: bool,
     verbose: bool,
     page_index: u16,
     total_pages: u16,
@@ -1020,9 +1020,7 @@ unsafe fn process_single_ifd(
         TIFFSetField(tif_dst, TIFFTAG_RESOLUTIONUNIT, resunit as u32);
     }
 
-    if is_first_page {
-        clone_metadata(tif_src, tif_dst)?;
-    }
+    clone_metadata(tif_src, tif_dst)?;
 
     if let Some(lvl) = level {
         match compression {

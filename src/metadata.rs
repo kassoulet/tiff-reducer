@@ -15,6 +15,20 @@ pub unsafe fn clone_metadata(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     copy_tag_float(src, dst, TIFFTAG_YRESOLUTION)?;
     copy_tag_u16(src, dst, TIFFTAG_RESOLUTIONUNIT)?;
 
+    // Orientation
+    copy_tag_u16(src, dst, TIFFTAG_ORIENTATION)?;
+
+    // FillOrder
+    copy_tag_u16(src, dst, TIFFTAG_FILLORDER)?;
+
+    // Common ASCII tags
+    copy_tag_ascii(src, dst, TIFFTAG_MAKE)?;
+    copy_tag_ascii(src, dst, TIFFTAG_MODEL)?;
+    copy_tag_ascii(src, dst, TIFFTAG_SOFTWARE)?;
+    copy_tag_ascii(src, dst, TIFFTAG_DATETIME)?;
+    copy_tag_ascii(src, dst, TIFFTAG_ARTIST)?;
+    copy_tag_ascii(src, dst, TIFFTAG_COPYRIGHT)?;
+
     // Specialized metadata components
     copy_extrasamples(src, dst)?;
     copy_colormap(src, dst)?;
@@ -363,6 +377,18 @@ unsafe fn copy_tag_float(src: *mut TIFF, dst: *mut TIFF, tag: u32) -> Result<()>
     if TIFFGetField(src, tag, &mut val) != 0 {
         if TIFFSetField(dst, tag, val as f64) == 0 {
             return Err(anyhow!("Failed to set float tag {}", tag));
+        }
+    }
+    Ok(())
+}
+
+unsafe fn copy_tag_ascii(src: *mut TIFF, dst: *mut TIFF, tag: u32) -> Result<()> {
+    let mut ptr: *mut c_char = std::ptr::null_mut();
+    if TIFFGetField(src, tag, &mut ptr) != 0 {
+        if !ptr.is_null() {
+            if TIFFSetField(dst, tag, ptr) == 0 {
+                return Err(anyhow!("Failed to set ascii tag {}", tag));
+            }
         }
     }
     Ok(())
