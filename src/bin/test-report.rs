@@ -41,14 +41,19 @@ struct TestResult {
     duration_ms: u64,
     thumb_orig: Option<String>,
     thumb_comp: Option<String>,
+    orig_path: Option<String>,
+    comp_path: Option<String>,
     codec: String,
+    verification_passed: bool,
+    verification_score: Option<f64>,
 }
 
 #[derive(Debug)]
 struct ReportSummary {
     total: usize,
-    success: usize,
-    failed: usize,
+    verified: usize,
+    failed_verification: usize,
+    failed_compression: usize,
     results: Vec<TestResult>,
     total_duration_ms: u64,
 }
@@ -298,17 +303,21 @@ fn get_test_images(limit: Option<usize>, lossy: bool) -> Vec<PathBuf> {
 
 /// Create a small PNG thumbnail from a TIFF file
 fn create_thumbnail(input: &Path, output: &Path, size: u32, binary_path: &Path) -> bool {
-    // Wrap in catch_unwind to prevent panics in third-party crates from crashing the reporter
+    // 1. Try pure Rust 'image' crate first
+    // Set a custom panic hook to suppress the "expected" panic from the tiff crate
+    let old_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| { /* do nothing */ }));
+
     let result = std::panic::catch_unwind(|| {
-        // 1. Try pure Rust 'image' crate first
         if let Ok(img) = image::open(input) {
             let thumb = img.thumbnail(size, size);
-            if thumb.save(output).is_ok() {
-                return true;
-            }
+            return thumb.save(output).is_ok();
         }
         false
     });
+
+    // Restore the old hook
+    std::panic::set_hook(old_hook);
 
     if let Ok(true) = result {
         return true;
@@ -363,6 +372,42 @@ fn create_thumbnail(input: &Path, output: &Path, size: u32, binary_path: &Path) 
     false
 }
 
+/// Verify lossless compression using tiffcmp
+fn verify_lossless(input: &Path, output: &Path) -> bool {
+    Command::new("tiffcmp")
+        .arg("-t")
+        .arg(input)
+        .arg(output)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Verify lossy compression using ImageMagick 'compare' (PSNR)
+fn verify_lossy(input: &Path, output: &Path) -> Option<f64> {
+    let output = Command::new("compare")
+        .arg("-metric")
+        .arg("PSNR")
+        .arg(input)
+        .arg(output)
+        .arg("null:")
+        .output()
+        .ok()?;
+
+    // ImageMagick prints metric to stderr
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let psnr_str = stderr.split_whitespace().next()?;
+
+    // Handle "inf" for identical images
+    if psnr_str == "inf" {
+        return Some(100.0); // Cap at 100 for report
+    }
+
+    psnr_str.parse::<f64>().ok()
+}
+
 /// Test compression of a single file
 fn test_compression(
     input_path: &Path,
@@ -371,6 +416,7 @@ fn test_compression(
     level: u32,
     lossy: bool,
     thumbs_dir: &Path,
+    generated_dir: &Path,
 ) -> TestResult {
     let name = input_path
         .file_name()
@@ -380,8 +426,9 @@ fn test_compression(
 
     let orig_size = fs::metadata(input_path).map(|m| m.len()).unwrap_or(0);
 
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let output_path = temp_dir.path().join("output.tif");
+    let prefix = if lossy { "lossy" } else { "lossless" };
+    let output_name = format!("{}_{}_{}", prefix, format, name);
+    let output_path = generated_dir.join(&output_name);
 
     let start = Instant::now();
 
@@ -414,6 +461,22 @@ fn test_compression(
     } else {
         0
     };
+
+    let mut verification_passed = false;
+    let mut verification_score = None;
+
+    if success {
+        if lossy {
+            verification_score = verify_lossy(input_path, &output_path);
+            // Consider lossy "passed" if we got a PSNR (typically > 20 is acceptable for very low levels)
+            verification_passed = verification_score.is_some_and(|s| s > 20.0);
+        } else {
+            verification_passed = verify_lossless(input_path, &output_path);
+            if verification_passed {
+                verification_score = Some(100.0);
+            }
+        }
+    }
 
     let error = if !success {
         if lossy
@@ -642,7 +705,7 @@ fn test_compression(
     }
 
     TestResult {
-        name,
+        name: name.clone(),
         success,
         error,
         orig_size,
@@ -650,11 +713,19 @@ fn test_compression(
         duration_ms,
         thumb_orig,
         thumb_comp,
+        orig_path: Some(format!("images/{}", name)),
+        comp_path: if success {
+            Some(format!("generated/{}", output_name))
+        } else {
+            None
+        },
         codec: if lossy {
             format!("lossy (lvl {})", level)
         } else {
             format!("{} (lvl {})", format, level)
         },
+        verification_passed,
+        verification_score,
     }
 }
 
@@ -674,15 +745,17 @@ fn generate_report(
 
     report.push_str("## Summary\n\n");
     if let Some(s) = lossless_summary {
+        let failed = s.failed_compression + s.failed_verification;
         report.push_str(&format!(
-            "- [Lossless Report](#lossless-report): {} working, {} failed\n",
-            s.success, s.failed
+            "- [Lossless Report](#lossless-report): {} verified, {} failed\n",
+            s.verified, failed
         ));
     }
     if let Some(s) = lossy_summary {
+        let failed = s.failed_compression + s.failed_verification;
         report.push_str(&format!(
-            "- [Lossy Report](#lossy-report): {} working, {} failed\n",
-            s.success, s.failed
+            "- [Lossy Report](#lossy-report): {} verified, {} failed\n",
+            s.verified, failed
         ));
     }
     report.push('\n');
@@ -709,19 +782,22 @@ fn render_section(report: &mut String, summary: &ReportSummary) {
         "### Summary\n\n| Category | Count | Percentage |\n|----------|-------|------------|\n",
     );
     report.push_str(&format!(
-        "| ✅ Working | {} | {:.1}% |\n| ❌ Failed | {} | {:.1}% |\n| **Total** | **{}** | **100%** |\n\n",
-        summary.success,
-        if summary.total > 0 { summary.success as f64 / summary.total as f64 * 100.0 } else { 0.0 },
-        summary.failed,
-        if summary.total > 0 { summary.failed as f64 / summary.total as f64 * 100.0 } else { 0.0 },
+        "| 💎 Verified | {} | {:.1}% |\n| ⚠️ Verification Failed | {} | {:.1}% |\n| ❌ Compression Failed | {} | {:.1}% |\n| **Total** | **{}** | **100%** |\n\n",
+        summary.verified,
+        if summary.total > 0 { summary.verified as f64 / summary.total as f64 * 100.0 } else { 0.0 },
+        summary.failed_verification,
+        if summary.total > 0 { summary.failed_verification as f64 / summary.total as f64 * 100.0 } else { 0.0 },
+        summary.failed_compression,
+        if summary.total > 0 { summary.failed_compression as f64 / summary.total as f64 * 100.0 } else { 0.0 },
         summary.total
     ));
 
-    // Failed images
-    let failed: Vec<&TestResult> = summary.results.iter().filter(|r| !r.success).collect();
-    if !failed.is_empty() {
-        report.push_str("### ❌ Failed Images\n\n| File | Original Size | Error |\n|------|---------------|-------|\n");
-        for result in &failed {
+    // Images where compression failed
+    let failed_compression: Vec<&TestResult> =
+        summary.results.iter().filter(|r| !r.success).collect();
+    if !failed_compression.is_empty() {
+        report.push_str("### ❌ Compression Failed\n\n| File | Original Size | Error |\n|------|---------------|-------|\n");
+        for result in &failed_compression {
             report.push_str(&format!(
                 "| `{}` | {} bytes | {} |\n",
                 result.name,
@@ -732,36 +808,80 @@ fn render_section(report: &mut String, summary: &ReportSummary) {
         report.push('\n');
     }
 
-    // Working images
-    let working: Vec<&TestResult> = summary.results.iter().filter(|r| r.success).collect();
-    if !working.is_empty() {
-        report.push_str(
-            "### ✅ Working Images\n\n| Original | Compressed | Details |\n|:---:|:---:|:---:|\n",
-        );
-        for result in &working {
-            report.push_str("| ");
-            if let Some(ref thumb) = result.thumb_orig {
-                report.push_str(&format!("![Original]({})", thumb));
-            } else {
-                report.push_str("*N/A*");
-            }
-            report.push_str(" | ");
-            if let Some(ref thumb) = result.thumb_comp {
-                report.push_str(&format!("![Compressed]({})", thumb));
-            } else {
-                report.push_str("*N/A*");
-            }
-
-            let reduction = if result.orig_size > 0 {
-                (1.0 - result.comp_size as f64 / result.orig_size as f64) * 100.0
-            } else {
-                0.0
-            };
-            report.push_str(&format!(" | **File:** `{}`<br>**Codec:** {}<br>**Size:** {} → {}<br>**Red:** {:.1}%<br>**Time:** {}ms |\n",
-                result.name, result.codec, format_size(result.orig_size), format_size(result.comp_size), reduction, result.duration_ms));
+    // Images where verification failed
+    let failed_verification: Vec<&TestResult> = summary
+        .results
+        .iter()
+        .filter(|r| r.success && !r.verification_passed)
+        .collect();
+    if !failed_verification.is_empty() {
+        report.push_str("### ⚠️ Verification Failed\n\n| Original | Compressed | Details |\n|:---:|:---:|:---:|\n");
+        for result in failed_verification {
+            render_result_row(report, result);
         }
         report.push('\n');
     }
+
+    // Working and Verified images
+    let verified: Vec<&TestResult> = summary
+        .results
+        .iter()
+        .filter(|r| r.success && r.verification_passed)
+        .collect();
+    if !verified.is_empty() {
+        report.push_str(
+            "### ✅ Verified Images\n\n| Original | Compressed | Details |\n|:---:|:---:|:---:|\n",
+        );
+        for result in &verified {
+            render_result_row(report, result);
+        }
+        report.push('\n');
+    }
+}
+
+fn render_result_row(report: &mut String, result: &TestResult) {
+    report.push_str("| ");
+    if let Some(ref thumb) = result.thumb_orig {
+        report.push_str(&format!("![Original]({})", thumb));
+    } else {
+        report.push_str("*N/A*");
+    }
+    report.push_str(" | ");
+    if let Some(ref thumb) = result.thumb_comp {
+        report.push_str(&format!("![Compressed]({})", thumb));
+    } else {
+        report.push_str("*N/A*");
+    }
+
+    let reduction = if result.orig_size > 0 {
+        (1.0 - result.comp_size as f64 / result.orig_size as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let verify_str = if result.verification_passed {
+        if let Some(score) = result.verification_score {
+            if score >= 100.0 {
+                "✅ Bit-perfect".to_string()
+            } else {
+                format!("✅ PSNR: {:.1} dB", score)
+            }
+        } else {
+            "✅ Passed".to_string()
+        }
+    } else {
+        "❌ Failed".to_string()
+    };
+
+    let links = format!(
+        "[Original]({}) \\| [Compressed]({})",
+        result.orig_path.as_deref().unwrap_or("#"),
+        result.comp_path.as_deref().unwrap_or("#")
+    );
+
+    report.push_str(&format!(" | **File:** `{}`<br>**Codec:** {}<br>**Size:** {} → {} ({:.1}%)<br>**Verify:** {}<br>**Time:** {}ms<br>{}",
+        result.name, result.codec, format_size(result.orig_size), format_size(result.comp_size), reduction, verify_str, result.duration_ms, links));
+    report.push_str(" |\n");
 }
 
 fn format_size(size: u64) -> String {
@@ -782,9 +902,11 @@ fn main() {
     let output_path = PathBuf::from(&cli.output);
     let report_dir = output_path.parent().unwrap_or_else(|| Path::new("."));
     let thumbs_dir = report_dir.join("thumbnails");
+    let generated_dir = report_dir.join("generated");
 
     // Create directories
     fs::create_dir_all(&thumbs_dir).expect("Failed to create thumbnails directory");
+    fs::create_dir_all(&generated_dir).expect("Failed to create generated directory");
 
     // Find binary
     let binary_path = if let Ok(metadata) = Command::new("cargo")
@@ -832,13 +954,21 @@ fn main() {
 
     let mut lossless_summary = ReportSummary {
         total: images.len(),
-        success: 0,
-        failed: 0,
+        verified: 0,
+        failed_verification: 0,
+        failed_compression: 0,
         results: Vec::new(),
         total_duration_ms: 0,
     };
     let start = Instant::now();
-    for image_path in &images {
+    for (i, image_path) in images.iter().enumerate() {
+        let name = image_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        print!("\r[{:3}/{:3}] Lossless: {} ...", i + 1, images.len(), name);
+        std::io::stdout().flush().unwrap();
+
         let result = test_compression(
             image_path,
             &binary_path,
@@ -846,25 +976,39 @@ fn main() {
             cli.level,
             false,
             &thumbs_dir,
+            &generated_dir,
         );
         if result.success {
-            lossless_summary.success += 1;
+            if result.verification_passed {
+                lossless_summary.verified += 1;
+            } else {
+                lossless_summary.failed_verification += 1;
+            }
         } else {
-            lossless_summary.failed += 1;
+            lossless_summary.failed_compression += 1;
         }
         lossless_summary.results.push(result);
     }
+    println!("\rLossless testing completed.                                        ");
     lossless_summary.total_duration_ms = start.elapsed().as_millis() as u64;
 
     let mut lossy_summary = ReportSummary {
         total: images.len(),
-        success: 0,
-        failed: 0,
+        verified: 0,
+        failed_verification: 0,
+        failed_compression: 0,
         results: Vec::new(),
         total_duration_ms: 0,
     };
     let start = Instant::now();
-    for image_path in &images {
+    for (i, image_path) in images.iter().enumerate() {
+        let name = image_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        print!("\r[{:3}/{:3}] Lossy:    {} ...", i + 1, images.len(), name);
+        std::io::stdout().flush().unwrap();
+
         let result = test_compression(
             image_path,
             &binary_path,
@@ -872,14 +1016,20 @@ fn main() {
             cli.level,
             true,
             &thumbs_dir,
+            &generated_dir,
         );
         if result.success {
-            lossy_summary.success += 1;
+            if result.verification_passed {
+                lossy_summary.verified += 1;
+            } else {
+                lossy_summary.failed_verification += 1;
+            }
         } else {
-            lossy_summary.failed += 1;
+            lossy_summary.failed_compression += 1;
         }
         lossy_summary.results.push(result);
     }
+    println!("\rLossy testing completed.                                           ");
     lossy_summary.total_duration_ms = start.elapsed().as_millis() as u64;
 
     generate_report(Some(&lossless_summary), Some(&lossy_summary), &output_path);

@@ -472,7 +472,7 @@ pub const COMPRESSION_JPEGXL: u16 = 50005;
   - Generate diff images for visual inspection
 - [ ] **Run on all 56 test images** automatically
 - [ ] **Integration with CI/CD** - fail on pixel mismatch for lossless
-- [ ] **SSIM/PSNR reporting** for quality tracking over time
+- [x] **SSIM/PSNR reporting** for quality tracking over time (implemented in v0.4.0)
 - [ ] **HTML test reports** with visual comparisons
 
 ---
@@ -594,7 +594,7 @@ tests/report/
 
 **Future Enhancements:**
 - [ ] **Difference visualization** (highlight changed pixels)
-- [ ] **SSIM/PSNR metrics** for quality assessment
+- ✅ **SSIM/PSNR metrics** for quality assessment (implemented in v0.4.0)
 - [ ] **Filter by status** (show only failures)
 - [ ] **Sort options** (by name, size, ratio, status)
 - [ ] **Download report** (ZIP with all thumbnails)

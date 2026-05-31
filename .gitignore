@@ -11,3 +11,4 @@ tests/images/*.tif
 
 .aider*
 *.tmp_tiffreducer
+tests/generated/
