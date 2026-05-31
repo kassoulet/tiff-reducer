@@ -5,9 +5,6 @@ QWEN.md
 index.html
 prompt.md
 test-results.txt
-tests/report/
-tests/images/*.tif
-tests/images/*.tif
 
 .aider*
 *.tmp_tiffreducer
