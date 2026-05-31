@@ -593,6 +593,8 @@ tests/report/
 - Non-standard bit depths (3/5/7-bit) may fail
 
 **Future Enhancements:**
+- [ ] **Parallel Zstd compression** using `libtiff-sys`
+- [ ] **Parallel GDAL backend** (create separate branch for prototype)
 - [ ] **Difference visualization** (highlight changed pixels)
 - ✅ **SSIM/PSNR metrics** for quality assessment (implemented in v0.4.0)
 - [ ] **Filter by status** (show only failures)
