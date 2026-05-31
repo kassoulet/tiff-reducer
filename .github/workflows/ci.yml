@@ -23,7 +23,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y git cmake make g++ gdal-bin
+        sudo apt-get install -y git cmake make g++ gdal-bin libtiff-tools imagemagick
 
     - name: Install uv and prek
       run: |
@@ -72,7 +72,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y git cmake make g++ gdal-bin
+        sudo apt-get install -y git cmake make g++ gdal-bin libtiff-tools imagemagick
 
     - name: Build release binary
       run: cargo build --release
