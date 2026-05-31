@@ -372,17 +372,29 @@ fn create_thumbnail(input: &Path, output: &Path, size: u32, binary_path: &Path) 
     false
 }
 
-/// Verify lossless compression using tiffcmp
+/// Verify lossless compression using ImageMagick 'compare' (AE - Absolute Error)
+/// This is more robust than tiffcmp as it handles tiled vs striped layout differences.
 fn verify_lossless(input: &Path, output: &Path) -> bool {
-    Command::new("tiffcmp")
-        .arg("-t")
+    let output = Command::new("compare")
+        .arg("-metric")
+        .arg("AE")
         .arg(input)
         .arg(output)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .arg("null:")
+        .output();
+
+    match output {
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if let Some(count_str) = stderr.split_whitespace().next() {
+                if let Ok(count) = count_str.parse::<u64>() {
+                    return count == 0;
+                }
+            }
+            false
+        }
+        Err(_) => false,
+    }
 }
 
 /// Verify lossy compression using ImageMagick 'compare' (PSNR)
