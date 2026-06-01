@@ -81,23 +81,10 @@ This document lists future features and known limitations to address in future r
 ---
 
 ## Future Enhancements
-- [ ] **Parallel Zstd compression** using `libtiff-sys`
 - [ ] **Parallel GDAL backend** (create separate branch for prototype)
 - [ ] **Difference visualization** (highlight changed pixels)
 - [ ] **Filter by status** (show only failures)
 - [ ] **Sort options** (by name, size, ratio, status)
-- [ ] **Download report** (ZIP with all thumbnails)
-- [ ] Per-page compression settings (different codec per page)
-- [ ] Page selection/range compression (compress only pages 1-5)
-- [ ] Page extraction/splitting (create separate files per page)
-- [ ] OME-XML parsing and validation (using `ome-rs` crate)
-- [ ] Support for OME-TIFF 5D data (X, Y, Z, Channel, Time)
-- [ ] OME-XML metadata editing (update dimensions, channels)
-- [ ] Convert OME-TIFF to standard TIFF with preserved metadata
-- [ ] Display current IFD/tile progress ("IFD (x/y) Tile (x/y)")
-- [ ] Add Zstd threads option for compression
-- [ ] Interactive Mode (prompt for settings)
-- [ ] Configuration Files (`.tiff-reducer.toml`)
 
 ---
 
@@ -138,9 +125,7 @@ This document lists future features and known limitations to address in future r
 
 ## Testing Improvements
 
-- [ ] **Automated test discovery** - find all TIFF files in test directory
 - [ ] **Parametrized tests** - run same test on multiple files
-- [ ] **CI/CD integration** - GitHub Actions, GitLab CI
 - [ ] **Code coverage** - track which code paths are tested
 - [ ] **Performance regression tests** - track compression speed over time
 - [ ] **ExtraSamples/Alpha channel verification** - Verify alpha channel is preserved correctly
