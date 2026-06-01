@@ -106,10 +106,6 @@ enum Commands {
         /// Enable verbose logging for detailed progress
         #[arg(short, long)]
         verbose: bool,
-
-        /// Number of threads to use for Zstd compression
-        #[arg(long)]
-        zstd_threads: Option<usize>,
     },
     /// Analyze a TIFF file and display metadata
     Analyze {
@@ -209,21 +205,10 @@ fn main() -> Result<()> {
             benchmark,
             jobs,
             verbose,
-            zstd_threads,
         } => {
             compress_command(
-                input,
-                output,
-                format,
-                level,
-                lossy,
-                quantize,
-                extreme,
-                dry_run,
-                benchmark,
-                jobs,
+                input, output, format, level, lossy, quantize, extreme, dry_run, benchmark, jobs,
                 verbose,
-                zstd_threads,
             )?;
         }
         Commands::Analyze { path } => {
@@ -330,7 +315,6 @@ fn compress_command(
     benchmark: bool,
     jobs: Option<usize>,
     verbose: bool,
-    zstd_threads: Option<usize>,
 ) -> Result<()> {
     // Expand directories to file lists
     let files: Vec<PathBuf> = input
@@ -413,7 +397,6 @@ fn compress_command(
                 dry_run,
                 benchmark,
                 verbose,
-                zstd_threads,
                 &pb,
             ) {
                 Ok((original, compressed, best_fmt, is_dry_run)) => {
@@ -460,7 +443,6 @@ fn process_single_file(
     dry_run: bool,
     benchmark: bool,
     verbose: bool,
-    zstd_threads: Option<usize>,
     pb: &ProgressBar,
 ) -> Result<(u64, u64, String, bool)> {
     let original_size = fs::metadata(input)?.len();
@@ -587,7 +569,6 @@ fn process_single_file(
                 effective_level,
                 quantize,
                 verbose,
-                zstd_threads,
                 total_pages,
                 pb,
             ) {
@@ -663,7 +644,6 @@ fn process_single_file(
             effective_level,
             quantize,
             verbose,
-            zstd_threads,
             total_pages,
             pb,
         )?;
@@ -687,7 +667,6 @@ fn process_single_file(
         effective_level,
         quantize,
         verbose,
-        zstd_threads,
         total_pages,
         pb,
     )?;
@@ -769,7 +748,6 @@ fn run_compression_pass(
     level: Option<u32>,
     quantize: bool,
     verbose: bool,
-    zstd_threads: Option<usize>,
     total_pages: u16,
     pb: &ProgressBar,
 ) -> Result<()> {
@@ -828,7 +806,6 @@ fn run_compression_pass(
                 page,
                 total_pages,
                 pb,
-                zstd_threads,
             )?;
 
             if TIFFReadDirectory(tif_src) == 0 {
@@ -854,7 +831,6 @@ fn run_compression_to_fd(
     level: Option<u32>,
     quantize: bool,
     verbose: bool,
-    zstd_threads: Option<usize>,
     total_pages: u16,
     pb: &ProgressBar,
 ) -> Result<u64> {
@@ -914,7 +890,6 @@ fn run_compression_to_fd(
                 page,
                 total_pages,
                 pb,
-                zstd_threads,
             )?;
 
             if TIFFReadDirectory(tif_src) == 0 {
@@ -948,7 +923,6 @@ unsafe fn process_single_ifd(
     page_index: u16,
     total_pages: u16,
     pb: &ProgressBar,
-    zstd_threads: Option<usize>,
 ) -> Result<()> {
     let mut w = 0u32;
     let mut h = 0u32;
@@ -1030,10 +1004,6 @@ unsafe fn process_single_ifd(
             COMPRESSION_ZSTD => {
                 let clamped: i32 = lvl.clamp(1, 22) as i32;
                 TIFFSetField(tif_dst, TIFFTAG_ZSTD_LEVEL, clamped);
-
-                // Enable multi-threaded Zstd if supported (libtiff 4.5+)
-                let threads = zstd_threads.unwrap_or_else(num_cpus::get) as i32;
-                TIFFSetField(tif_dst, TIFFTAG_ZSTD_THREADS, threads);
             }
             COMPRESSION_JPEGXL | COMPRESSION_JPEG | COMPRESSION_WEBP => {
                 let tag = match compression {
