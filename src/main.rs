@@ -945,6 +945,20 @@ unsafe fn process_single_ifd(
     TIFFGetField(tif_src, TIFFTAG_PHOTOMETRIC, &mut photometric);
     TIFFGetField(tif_src, TIFFTAG_PLANARCONFIG, &mut planar);
 
+    if photometric == PHOTOMETRIC_YCBCR {
+        let mut h_sub: u16 = 0;
+        let mut v_sub: u16 = 0;
+        if TIFFGetField(tif_src, TIFFTAG_YCBCRSUBSAMPLING, &mut h_sub, &mut v_sub) != 0 {
+            if h_sub != 1 || v_sub != 1 {
+                return Err(anyhow!(
+                    "YCbCr subsampling ({},{}) is not supported and causes crashes",
+                    h_sub,
+                    v_sub
+                ));
+            }
+        }
+    }
+
     if spp == 0 {
         spp = 1;
     }

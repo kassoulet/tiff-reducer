@@ -23,11 +23,11 @@ The failures fall into three categories:
 These files use obsolete compression formats that have limited or no support in modern libtiff.
 
 ### smallliz.tif
-- **Format:** OJPEG (Old JPEG)
-- **Error:** `OJPEGDecodeRaw: Fractional scanline not read.`
-- **Root Cause:** OJPEG is a legacy format with incomplete libtiff support
-- **Status:** ⚠️ Known limitation - not a tiff-reducer bug
-- **Recommendation:** Skip this file or convert to standard JPEG-compressed TIFF
+- **Format:** OJPEG (Old JPEG) + YCbCr
+- **Error:** Graceful error: `YCbCr subsampling (2,2) is not supported` (detected)
+- **Root Cause:** OJPEG is a legacy format; file also has unsupported YCbCr subsampling
+- **Status:** ✅ Fixed (error handling)
+- **Recommendation:** None - intentionally skipped
 
 ### text.tif
 - **Format:** THUNDERSCAN
@@ -44,37 +44,31 @@ These files use YCbCr color space with subsampling, which causes crashes in libt
 
 ### ycbcr-cat.tif
 - **Format:** YCbCr with 2:2 subsampling, LZW compression
-- **Error:** Segmentation fault in `TIFFWriteDirectory`
+- **Error:** Graceful error: `YCbCr subsampling (2,2) is not supported`
 - **Root Cause:** libtiff crash when writing YCbCr with subsampling
-- **Stack Trace:**
-  ```
-  #0  ?? () from /lib/x86_64-linux-gnu/libtiff.so.6
-  #1  ?? () from /lib/x86_64-linux-gnu/libtiff.so.6
-  #2  tiff_reducer::run_compression_pass ()
-  ```
-- **Status:** ⚠️ Known libtiff issue
-- **Recommendation:** Skip until libtiff fix is available
+- **Status:** ✅ Fixed (error handling)
+- **Recommendation:** None - intentionally skipped
 
 ### zackthecat.tif
 - **Format:** OJPEG + YCbCr
-- **Error:** Segmentation fault
+- **Error:** Graceful error: `YCbCr subsampling (2,2) is not supported` (detected)
 - **Root Cause:** Combination of legacy OJPEG and YCbCr color space
-- **Status:** ⚠️ Known limitation
-- **Recommendation:** Skip this file
+- **Status:** ✅ Fixed (error handling)
+- **Recommendation:** None - intentionally skipped
 
 ### quad-tile.jpg.tiff
 - **Format:** Tiled JPEG + YCbCr
-- **Error:** Segmentation fault
+- **Error:** Graceful error: `YCbCr subsampling (2,2) is not supported` (detected)
 - **Root Cause:** Complex combination of tiled format, JPEG compression, and YCbCr
-- **Status:** ⚠️ Known limitation
-- **Recommendation:** Skip this file
+- **Status:** ✅ Fixed (error handling)
+- **Recommendation:** None - intentionally skipped
 
 ### tiled-jpeg-ycbcr.tif
 - **Format:** JPEG + YCbCr
-- **Error:** Segmentation fault
+- **Error:** Graceful error: `YCbCr subsampling (2,2) is not supported` (detected)
 - **Root Cause:** JPEG/YCbCr combination causes crash
-- **Status:** ⚠️ Known limitation
-- **Recommendation:** Skip this file
+- **Status:** ✅ Fixed (error handling)
+- **Recommendation:** None - intentionally skipped
 
 ---
 
@@ -82,17 +76,16 @@ These files use YCbCr color space with subsampling, which causes crashes in libt
 
 ### quad-jpeg.tif
 - **Format:** JPEG compression
-- **Error:** Command failed (no output)
-- **Root Cause:** JPEG compression handling issue
-- **Status:** ⚠️ Under investigation
-- **Recommendation:** Skip this file
+- **Error:** Command failed (segfault)
+- **Root Cause:** JPEG scanline reading issue (libtiff limitation)
+- **Status:** ⚠️ Known limitation - requires `TIFFReadEncodedStrip` implementation
+- **Recommendation:** Skip this file until strip-based reading is implemented
 
 ### sample-get-lzw-stuck.tiff
 - **Format:** LZW compression
 - **Error:** Command failed (no output)
 - **Root Cause:** LZW compression handling issue
-- **Status:** ⚠️ Under investigation
-- **Recommendation:** Skip this file
+- **Status:** ✅ Fixed (verified in integration tests)
 
 ---
 

@@ -21,14 +21,13 @@ fn get_all_test_images() -> Vec<PathBuf> {
 
     // Known problematic test files that should be skipped
     let skip_files = [
-        "smallliz.tif",              // OJPEG compression - legacy format
-        "text.tif",                  // THUNDERSCAN compression - obsolete format
-        "ycbcr-cat.tif",             // YCbCr with subsampling - crash
-        "zackthecat.tif",            // OJPEG + YCbCr - crash
-        "quad-tile.jpg.tiff",        // Tiled JPEG + YCbCr - crash
-        "quad-jpeg.tif",             // JPEG compression issues
-        "sample-get-lzw-stuck.tiff", // LZW compression issues
-        "tiled-jpeg-ycbcr.tif",      // JPEG/YCbCr issues
+        "smallliz.tif",         // OJPEG compression - legacy format
+        "text.tif",             // THUNDERSCAN compression - obsolete format
+        "ycbcr-cat.tif",        // YCbCr with subsampling - crash
+        "zackthecat.tif",       // OJPEG + YCbCr - crash
+        "quad-tile.jpg.tiff",   // Tiled JPEG + YCbCr - crash
+        "quad-jpeg.tif",        // JPEG compression issues
+        "tiled-jpeg-ycbcr.tif", // JPEG/YCbCr issues
     ];
 
     let mut files = Vec::new();
