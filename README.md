@@ -89,6 +89,12 @@ tiff-reducer compress compressed.tif --output decompressed.tif --format uncompre
 tiff-reducer analyze image.tif
 ```
 
+### Wipe Image Content (keep statistics)
+Replaces the pixel data with synthetic, highly compressible data (per-channel sorted values). Per-channel min/max/mean/histogram are preserved exactly, all metadata is kept, but the actual image content is destroyed. Useful for sharing statistically representative test files without disclosing the imagery.
+```bash
+tiff-reducer wipe image.tif --output wiped.tif
+```
+
 ### Process a directory
 ```bash
 tiff-reducer compress ./input_folder --output ./output_folder --extreme
@@ -226,6 +232,12 @@ Options:
 
 ### `analyze`
 - Displays dimensions, channels, bit depth, format, and current compression.
+
+### `wipe`
+- Replaces image content with synthetic data preserving per-channel histogram (min/max/mean/stdDev), highly compressible. Metadata is preserved. Output is always Zstd.
+- `-o, --output <PATH>`: Specify output file or directory (overwrites input if omitted).
+- `-l, --level <LEVEL>`: Zstd compression level (1-22, default 19).
+- `-j, --jobs <JOBS>`: Number of parallel jobs (default: number of CPUs).
 
 ## Development
 

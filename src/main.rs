@@ -3,6 +3,7 @@
 mod ffi;
 mod metadata;
 mod quantize;
+mod wipe;
 
 use crate::ffi::*;
 use crate::metadata::clone_metadata;
@@ -113,6 +114,29 @@ enum Commands {
         #[arg(required = true)]
         path: PathBuf,
     },
+    /// Replace image content with synthetic data preserving per-channel
+    /// histogram (min/max/mean) while being highly compressible
+    Wipe {
+        /// Input file(s) or directory
+        #[arg(required = true)]
+        input: Vec<PathBuf>,
+
+        /// Output file or directory (overwrites input if omitted)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Zstd compression level (1-22, default 19)
+        #[arg(short, long)]
+        level: Option<u32>,
+
+        /// Number of parallel jobs (default: number of CPUs)
+        #[arg(short, long)]
+        jobs: Option<usize>,
+
+        /// Enable verbose logging for detailed progress
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -178,7 +202,9 @@ fn main() -> Result<()> {
 
     // Initialize logger based on verbose flag
     let log_level = match &cli.command {
-        Commands::Compress { verbose, .. } if *verbose => log::LevelFilter::Info,
+        Commands::Compress { verbose, .. } | Commands::Wipe { verbose, .. } if *verbose => {
+            log::LevelFilter::Info
+        }
         _ => log::LevelFilter::Warn,
     };
 
@@ -213,6 +239,15 @@ fn main() -> Result<()> {
         }
         Commands::Analyze { path } => {
             analyze_command(&path)?;
+        }
+        Commands::Wipe {
+            input,
+            output,
+            level,
+            jobs,
+            verbose,
+        } => {
+            wipe_command(input, output, level, jobs, verbose)?;
         }
     }
 
@@ -302,21 +337,8 @@ fn compression_name(comp: u16) -> &'static str {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn compress_command(
-    input: Vec<PathBuf>,
-    output: Option<PathBuf>,
-    format: CompressionFormat,
-    level: Option<u32>,
-    lossy: bool,
-    quantize: bool,
-    extreme: bool,
-    dry_run: bool,
-    benchmark: bool,
-    jobs: Option<usize>,
-    verbose: bool,
-) -> Result<()> {
-    // Expand directories to file lists
+/// Expand directories to TIFF file lists
+fn expand_tiff_inputs(input: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let files: Vec<PathBuf> = input
         .iter()
         .flat_map(|path| {
@@ -340,6 +362,24 @@ fn compress_command(
     if files.is_empty() {
         return Err(anyhow!("No TIFF files found in the specified input paths"));
     }
+    Ok(files)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compress_command(
+    input: Vec<PathBuf>,
+    output: Option<PathBuf>,
+    format: CompressionFormat,
+    level: Option<u32>,
+    lossy: bool,
+    quantize: bool,
+    extreme: bool,
+    dry_run: bool,
+    benchmark: bool,
+    jobs: Option<usize>,
+    verbose: bool,
+) -> Result<()> {
+    let files = expand_tiff_inputs(&input)?;
 
     let m = MultiProgress::new();
 
@@ -1445,6 +1485,397 @@ unsafe fn process_tiled_image(
                     let row_slice = &image_strip[row_start..row_start + in_row_size];
                     TIFFWriteScanline(tif_dst, row_slice.as_ptr() as *mut _, global_row, s);
                 }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn wipe_command(
+    input: Vec<PathBuf>,
+    output: Option<PathBuf>,
+    level: Option<u32>,
+    jobs: Option<usize>,
+    verbose: bool,
+) -> Result<()> {
+    let files = expand_tiff_inputs(&input)?;
+
+    let m = MultiProgress::new();
+    let num_jobs = jobs.unwrap_or_else(num_cpus::get);
+
+    files
+        .par_iter()
+        .with_max_len(num_jobs)
+        .for_each(|file_path| {
+            let pb = m.add(ProgressBar::new(100));
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template(
+                        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}% {msg}",
+                    )
+                    .unwrap(),
+            );
+            pb.set_position(0);
+            pb.set_message(format!(
+                "Wiping {:?}",
+                file_path.file_name().unwrap_or(file_path.as_os_str())
+            ));
+
+            let target_output = if let Some(ref out) = output {
+                if out.is_dir() {
+                    match sanitize_filename(file_path.file_name().unwrap_or(file_path.as_os_str()))
+                    {
+                        Some(safe_name) => out.join(safe_name),
+                        None => {
+                            pb.finish_with_message(format!(
+                                "Error: Invalid filename {:?}",
+                                file_path.file_name()
+                            ));
+                            return;
+                        }
+                    }
+                } else {
+                    out.clone()
+                }
+            } else {
+                file_path.clone()
+            };
+
+            match wipe_single_file(file_path, &target_output, level, verbose, &pb) {
+                Ok((original, wiped)) => {
+                    pb.finish();
+                    let ratio = if original > 0 {
+                        (1.0 - (wiped as f64 / original as f64)) * 100.0
+                    } else {
+                        0.0
+                    };
+                    println!(
+                        "\n[{}] Wiped: {} -> {} bytes ({:.1}% reduction)",
+                        file_path
+                            .file_name()
+                            .unwrap_or(file_path.as_os_str())
+                            .to_string_lossy(),
+                        original,
+                        wiped,
+                        ratio
+                    );
+                }
+                Err(e) => {
+                    pb.finish_with_message(format!("Error: {}", e));
+                }
+            }
+        });
+
+    Ok(())
+}
+
+fn wipe_single_file(
+    input: &Path,
+    output: &Path,
+    level: Option<u32>,
+    verbose: bool,
+    pb: &ProgressBar,
+) -> Result<(u64, u64)> {
+    let original_size = fs::metadata(input)?.len();
+
+    // Get IFD count
+    let mut total_pages = 0u16;
+    unsafe {
+        let c_path = CString::new(input.to_str().ok_or_else(|| anyhow!("Invalid path"))?)?;
+        let tif = TIFFOpen(c_path.as_ptr(), CString::new("r")?.as_ptr());
+        if tif.is_null() {
+            return Err(anyhow!("Failed to open TIFF file: {:?}", input));
+        }
+        loop {
+            total_pages += 1;
+            if TIFFReadDirectory(tif) == 0 {
+                break;
+            }
+        }
+        TIFFClose(tif);
+    };
+
+    let c_input = CString::new(
+        input
+            .to_str()
+            .ok_or_else(|| anyhow!("Invalid input path"))?,
+    )?;
+
+    unsafe {
+        let tif_src = TIFFOpen(c_input.as_ptr(), CString::new("r")?.as_ptr());
+        if tif_src.is_null() {
+            return Err(anyhow!("Failed to open source TIFF"));
+        }
+
+        let tmp_path = output.with_extension("tmp_tiffreducer");
+        let c_tmp = CString::new(
+            tmp_path
+                .to_str()
+                .ok_or_else(|| anyhow!("Invalid temp path"))?,
+        )?;
+
+        let mode_str = if input.metadata()?.len() > 4 * 1024 * 1024 * 1024 {
+            "w8"
+        } else {
+            "w"
+        };
+        let tif_dst = TIFFOpen(c_tmp.as_ptr(), CString::new(mode_str)?.as_ptr());
+        if tif_dst.is_null() {
+            TIFFClose(tif_src);
+            return Err(anyhow!("Failed to open destination TIFF"));
+        }
+
+        // Register GeoTIFF tags on both handles
+        crate::metadata::register_geotiff_tags_ffi(tif_src);
+        crate::metadata::register_geotiff_tags_ffi(tif_dst);
+
+        let mut page = 0;
+        loop {
+            if verbose {
+                log::info!("Wiping IFD {}", page);
+            }
+            pb.set_message(format!("Page {}/{}", page + 1, total_pages));
+            pb.set_position(((page as u64) * 100) / (total_pages as u64));
+
+            let result = wipe_single_ifd(tif_src, tif_dst, level, verbose, pb);
+            if let Err(e) = result {
+                TIFFClose(tif_src);
+                TIFFClose(tif_dst);
+                let _ = fs::remove_file(&tmp_path);
+                return Err(e);
+            }
+
+            if TIFFReadDirectory(tif_src) == 0 {
+                break;
+            }
+            page += 1;
+        }
+
+        TIFFClose(tif_src);
+        TIFFClose(tif_dst);
+
+        fs::rename(tmp_path, output)?;
+    }
+
+    let wiped_size = fs::metadata(output)?.len();
+    Ok((original_size, wiped_size))
+}
+
+/// Wipe a single IFD: clone structure and metadata, but replace pixel data
+/// with per-channel sorted values (same histogram, highly compressible).
+unsafe fn wipe_single_ifd(
+    tif_src: *mut TIFF,
+    tif_dst: *mut TIFF,
+    level: Option<u32>,
+    verbose: bool,
+    pb: &ProgressBar,
+) -> Result<()> {
+    let mut w = 0u32;
+    let mut h = 0u32;
+    if TIFFGetField(tif_src, TIFFTAG_IMAGEWIDTH, &mut w) == 0
+        || TIFFGetField(tif_src, TIFFTAG_IMAGELENGTH, &mut h) == 0
+    {
+        return Err(anyhow!("Failed to read image dimensions"));
+    }
+
+    let mut bps = 0u16;
+    let mut spp = 0u16;
+    let mut fmt = 0u16;
+    let mut photometric: u16 = 0;
+    let mut planar: u16 = 0;
+
+    TIFFGetField(tif_src, TIFFTAG_BITSPERSAMPLE, &mut bps);
+    TIFFGetField(tif_src, TIFFTAG_SAMPLESPERPIXEL, &mut spp);
+    TIFFGetField(tif_src, TIFFTAG_SAMPLEFORMAT, &mut fmt);
+    TIFFGetField(tif_src, TIFFTAG_PHOTOMETRIC, &mut photometric);
+    TIFFGetField(tif_src, TIFFTAG_PLANARCONFIG, &mut planar);
+
+    if photometric == PHOTOMETRIC_YCBCR {
+        let mut h_sub: u16 = 0;
+        let mut v_sub: u16 = 0;
+        if TIFFGetField(tif_src, TIFFTAG_YCBCRSUBSAMPLING, &mut h_sub, &mut v_sub) != 0 {
+            if h_sub != 1 || v_sub != 1 {
+                return Err(anyhow!(
+                    "YCbCr subsampling ({},{}) is not supported and causes crashes",
+                    h_sub,
+                    v_sub
+                ));
+            }
+        }
+    }
+
+    if bps == 0 {
+        bps = 8;
+    }
+    if spp == 0 {
+        spp = 1;
+    }
+    if fmt == 0 {
+        fmt = SAMPLEFORMAT_UINT;
+    }
+    if photometric == 0 {
+        photometric = PHOTOMETRIC_MINISBLACK;
+    }
+    if planar == 0 {
+        planar = PLANARCONFIG_CONTIG;
+    }
+
+    let is_tiled = crate::ffi::TIFFIsTiled(tif_src) != 0;
+
+    TIFFSetField(tif_dst, TIFFTAG_IMAGEWIDTH, w);
+    TIFFSetField(tif_dst, TIFFTAG_IMAGELENGTH, h);
+    TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, bps as u32);
+    TIFFSetField(tif_dst, TIFFTAG_SAMPLESPERPIXEL, spp as u32);
+    TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, fmt as u32);
+    TIFFSetField(tif_dst, TIFFTAG_PHOTOMETRIC, photometric as u32);
+    if spp > 1 {
+        TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32);
+    }
+
+    // Force striped output even if source is tiled
+    TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h);
+
+    TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, COMPRESSION_ZSTD as i32);
+    let zstd_level: i32 = level.unwrap_or(19).clamp(1, 22) as i32;
+    TIFFSetField(tif_dst, TIFFTAG_ZSTD_LEVEL, zstd_level);
+
+    // Sorted data is monotonic: a predictor turns it into near-constant deltas
+    let predictor = if fmt == SAMPLEFORMAT_IEEEFP && matches!(bps, 16 | 24 | 32 | 64) {
+        PREDICTOR_FLOATINGPOINT
+    } else if matches!(bps, 8 | 16 | 32) && (fmt == SAMPLEFORMAT_UINT || fmt == SAMPLEFORMAT_INT) {
+        PREDICTOR_HORIZONTAL
+    } else {
+        PREDICTOR_NONE
+    };
+    if predictor != PREDICTOR_NONE {
+        TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, predictor as u32);
+    }
+
+    clone_metadata(tif_src, tif_dst)?;
+
+    // Channels interleaved within one plane buffer
+    let interleaved_spp = if planar == PLANARCONFIG_SEPARATE {
+        1usize
+    } else {
+        spp as usize
+    };
+    let num_planes = if planar == PLANARCONFIG_SEPARATE {
+        spp
+    } else {
+        1
+    };
+
+    let bytes_per_sample = (bps as usize).div_ceil(8);
+    let in_row_size = if bps >= 8 {
+        (w as usize) * bytes_per_sample * interleaved_spp
+    } else {
+        // Packed sub-byte data: rows are padded to byte boundary
+        ((w as usize) * (bps as usize) * interleaved_spp).div_ceil(8)
+    };
+
+    const MAX_PLANE_SIZE: usize = 16 * 1024 * 1024 * 1024;
+    let plane_size = in_row_size
+        .checked_mul(h as usize)
+        .filter(|&s| s > 0 && s <= MAX_PLANE_SIZE)
+        .ok_or_else(|| anyhow!("Image plane too large to wipe in memory"))?;
+
+    for s in 0..num_planes {
+        if verbose {
+            log::info!("Wiping plane {}/{}", s + 1, num_planes);
+        }
+
+        let mut plane = vec![0u8; plane_size];
+
+        if is_tiled {
+            read_tiled_plane(tif_src, &mut plane, w, h, in_row_size, s, num_planes)?;
+        } else {
+            let in_scanline = TIFFScanlineSize(tif_src) as usize;
+            if in_scanline == 0 || in_scanline > in_row_size {
+                return Err(anyhow!("Invalid scanline size: {}", in_scanline));
+            }
+            for row in 0..h {
+                let offset = (row as usize) * in_row_size;
+                if TIFFReadScanline(tif_src, plane[offset..].as_mut_ptr() as *mut _, row, s) < 0 {
+                    return Err(anyhow!("Failed to read scanline {} sample {}", row, s));
+                }
+            }
+        }
+
+        pb.set_message(format!("Sorting plane {}/{}", s + 1, num_planes));
+        crate::wipe::wipe_buffer(&mut plane, interleaved_spp, bps, fmt);
+
+        for row in 0..h {
+            let offset = (row as usize) * in_row_size;
+            if TIFFWriteScanline(tif_dst, plane[offset..].as_ptr() as *mut _, row, s) < 0 {
+                return Err(anyhow!("Failed to write scanline {} sample {}", row, s));
+            }
+        }
+    }
+
+    TIFFWriteDirectory(tif_dst);
+    Ok(())
+}
+
+/// Read one full plane of a tiled image into a row-major buffer
+unsafe fn read_tiled_plane(
+    tif_src: *mut TIFF,
+    plane: &mut [u8],
+    w: u32,
+    h: u32,
+    in_row_size: usize,
+    sample: u16,
+    num_planes: u16,
+) -> Result<()> {
+    let mut tile_width: u32 = 0;
+    let mut tile_length: u32 = 0;
+    TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width);
+    TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length);
+    if tile_width == 0 || tile_length == 0 {
+        return Err(anyhow!("Invalid tile dimensions"));
+    }
+
+    let bytes_per_pixel = in_row_size / (w as usize);
+    if bytes_per_pixel == 0 {
+        return Err(anyhow!("Sub-byte tiled images are not supported for wipe"));
+    }
+    let tiles_across = w.div_ceil(tile_width);
+    let tiles_down = h.div_ceil(tile_length);
+    let tiles_per_plane = tiles_across * tiles_down;
+
+    let tile_buffer_size = (tile_width as usize) * (tile_length as usize) * bytes_per_pixel;
+    let mut tile_buf = vec![0u8; tile_buffer_size];
+    let src_tile_row_size = (tile_width as usize) * bytes_per_pixel;
+
+    for tile_y in 0..tiles_down {
+        for tile_x in 0..tiles_across {
+            let tile_in_plane = tile_y * tiles_across + tile_x;
+            let tile_index = if num_planes > 1 {
+                (sample as u32 * tiles_per_plane) + tile_in_plane
+            } else {
+                tile_in_plane
+            };
+
+            if crate::ffi::TIFFReadEncodedTile(
+                tif_src,
+                tile_index,
+                tile_buf.as_mut_ptr() as *mut _,
+                tile_buffer_size as u32,
+            ) < 0
+            {
+                return Err(anyhow!("Failed to read tile {}", tile_index));
+            }
+
+            let start_x = (tile_x as usize) * (tile_width as usize);
+            let start_y = (tile_y as usize) * (tile_length as usize);
+            let actual_width = std::cmp::min(tile_width as usize, w as usize - start_x);
+            let actual_height = std::cmp::min(tile_length as usize, h as usize - start_y);
+
+            for row in 0..actual_height {
+                let src_start = row * src_tile_row_size;
+                let dst_start = (start_y + row) * in_row_size + start_x * bytes_per_pixel;
+                let copy_len = actual_width * bytes_per_pixel;
+                plane[dst_start..dst_start + copy_len]
+                    .copy_from_slice(&tile_buf[src_start..src_start + copy_len]);
             }
         }
     }
