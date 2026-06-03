@@ -5,6 +5,14 @@ All notable changes to tiff-reducer are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`wipe` command**: Replaces image content with synthetic data (per-channel sorted pixel values). The per-channel histogram — and therefore min/max/mean/stdDev — is preserved exactly, while the spatial content is destroyed and the output becomes highly compressible (Zstd + predictor). Useful for sharing statistically representative test files without disclosing the actual imagery.
+
+### Fixed
+- Added `dscf0013.tif` (YCbCr with 2,1 subsampling) to the integration test skip list; it is rejected since the YCbCr subsampling guard was introduced.
+
 ## [0.4.0] - 2026-05-28
 
 ### Added
