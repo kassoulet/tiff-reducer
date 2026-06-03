@@ -235,8 +235,9 @@ Options:
 
 ### `wipe`
 - Replaces image content with synthetic data preserving per-channel histogram (min/max/mean/stdDev), highly compressible. Metadata is preserved. Output is always Zstd.
+- For 8/16-bit integer samples the histogram is streamed (constant memory, no size limit, parallel tile decode); other sample types are sorted in memory.
 - `-o, --output <PATH>`: Specify output file or directory (overwrites input if omitted).
-- `-l, --level <LEVEL>`: Zstd compression level (1-22, default 19).
+- `-l, --level <LEVEL>`: Zstd compression level (1-22, default 9 — sorted data barely benefits from higher levels).
 - `-j, --jobs <JOBS>`: Number of parallel jobs (default: number of CPUs).
 
 ## Development
