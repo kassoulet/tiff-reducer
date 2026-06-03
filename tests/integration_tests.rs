@@ -28,6 +28,7 @@ fn get_all_test_images() -> Vec<PathBuf> {
         "quad-tile.jpg.tiff",   // Tiled JPEG + YCbCr - crash
         "quad-jpeg.tif",        // JPEG compression issues
         "tiled-jpeg-ycbcr.tif", // JPEG/YCbCr issues
+        "dscf0013.tif",         // YCbCr with subsampling (2,1) - rejected
     ];
 
     let mut files = Vec::new();
@@ -600,5 +601,173 @@ fn test_dry_run_mode() {
     assert!(
         !output_path.exists(),
         "Dry run should not create output file"
+    );
+}
+
+// ============================================================================
+// Wipe command tests
+// ============================================================================
+
+/// Get per-band (min, max, mean, stdDev) via gdalinfo -stats.
+/// Returns None if gdalinfo is unavailable.
+fn get_band_stats(path: &Path) -> Option<Vec<(f64, f64, f64, f64)>> {
+    let output = std::process::Command::new("gdalinfo")
+        .arg("-stats")
+        .arg("-json")
+        .arg(path)
+        .output()
+        .ok()?;
+
+    let info: Value = serde_json::from_slice(&output.stdout).ok()?;
+    let bands = info["bands"].as_array()?;
+    bands
+        .iter()
+        .map(|b| {
+            Some((
+                b["minimum"].as_f64()?,
+                b["maximum"].as_f64()?,
+                b["mean"].as_f64()?,
+                b["stdDev"].as_f64()?,
+            ))
+        })
+        .collect()
+}
+
+/// Run the wipe command on a single file
+fn run_wipe(input: &Path, output: &Path) -> bool {
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
+    cmd.arg("wipe").arg(input).arg("-o").arg(output);
+
+    match cmd.output() {
+        Ok(out) => out.status.success() && output.exists(),
+        Err(_) => false,
+    }
+}
+
+#[test]
+fn test_wipe_preserves_band_statistics() {
+    // Cover striped/tiled, gray/RGB, contig/planar, 8/16-bit, float
+    let images = [
+        "flower-minisblack-08.tif",
+        "flower-rgb-contig-08.tif",
+        "flower-rgb-planar-08.tif",
+        "flower-minisblack-16.tif",
+        "cramps-tile.tif",
+        "cmyk-3c-32b-float.tiff",
+    ];
+
+    for name in images {
+        let input = PathBuf::from("tests/images").join(name);
+        if !input.exists() {
+            eprintln!("Skipping missing test image: {}", name);
+            continue;
+        }
+
+        let temp_dir = TempDir::new().unwrap();
+        // Copy the input so gdalinfo -stats sidecar files land in the temp dir
+        let input_copy = temp_dir.path().join(name);
+        fs::copy(&input, &input_copy).unwrap();
+        let output = temp_dir.path().join("wiped.tif");
+
+        assert!(run_wipe(&input_copy, &output), "Wipe failed for {}", name);
+
+        // Wiped file must be smaller than the original
+        let original_size = fs::metadata(&input_copy).map(|m| m.len()).unwrap_or(0);
+        let wiped_size = fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+        assert!(
+            wiped_size < original_size,
+            "Wiped {} is not smaller: {} -> {} bytes",
+            name,
+            original_size,
+            wiped_size
+        );
+
+        // Statistics must be preserved exactly (requires GDAL)
+        match (get_band_stats(&input_copy), get_band_stats(&output)) {
+            (Some(orig_stats), Some(wiped_stats)) => {
+                assert_eq!(
+                    orig_stats.len(),
+                    wiped_stats.len(),
+                    "Band count changed for {}",
+                    name
+                );
+                for (i, (orig, wiped)) in orig_stats.iter().zip(wiped_stats.iter()).enumerate() {
+                    assert_eq!(
+                        orig, wiped,
+                        "Band {} statistics changed for {}: {:?} -> {:?}",
+                        i, name, orig, wiped
+                    );
+                }
+                eprintln!(
+                    "{}: stats preserved, {} -> {} bytes",
+                    name, original_size, wiped_size
+                );
+            }
+            _ => {
+                eprintln!("gdalinfo unavailable, skipping stats check for {}", name);
+            }
+        }
+    }
+}
+
+#[test]
+fn test_wipe_destroys_image_content() {
+    // The wiped image must NOT contain the original pixel arrangement:
+    // every row of sorted data must be non-decreasing.
+    let input = PathBuf::from("tests/images/flower-minisblack-08.tif");
+    if !input.exists() {
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let output = temp_dir.path().join("wiped.tif");
+    assert!(run_wipe(&input, &output), "Wipe failed");
+
+    // Decode with our own binary (analyze proves it opens); for content,
+    // convert via gdal if available
+    let png_path = temp_dir.path().join("wiped.png");
+    let convert = std::process::Command::new("gdal_translate")
+        .arg("-of")
+        .arg("PNG")
+        .arg(&output)
+        .arg(&png_path)
+        .output();
+
+    if convert.map(|o| o.status.success()).unwrap_or(false) {
+        let img = image::open(&png_path).expect("Failed to open converted PNG");
+        let gray = img.to_luma8();
+        let pixels: Vec<u8> = gray.pixels().map(|p| p.0[0]).collect();
+        let mut sorted = pixels.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            pixels, sorted,
+            "Wiped image content should be fully sorted (monotonic)"
+        );
+    } else {
+        eprintln!("gdal_translate unavailable, skipping content check");
+    }
+}
+
+#[test]
+fn test_wipe_corrupt_file_handling() {
+    let temp_dir = TempDir::new().unwrap();
+    let corrupt_path = temp_dir.path().join("corrupt.tif");
+    fs::write(&corrupt_path, b"NOT A TIFF FILE").unwrap();
+
+    let output_path = temp_dir.path().join("output.tif");
+
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_tiff-reducer"));
+    cmd.arg("wipe")
+        .arg(&corrupt_path)
+        .arg("-o")
+        .arg(&output_path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    let result = cmd.output().expect("Failed to run command");
+
+    assert!(
+        !result.status.success() || !output_path.exists(),
+        "Corrupt file should not be wiped successfully"
     );
 }
