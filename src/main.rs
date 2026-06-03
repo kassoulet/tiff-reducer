@@ -125,7 +125,7 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
-        /// Zstd compression level (1-22, default 19)
+        /// Zstd compression level (1-22, default 9)
         #[arg(short, long)]
         level: Option<u32>,
 
@@ -1637,7 +1637,7 @@ fn wipe_single_file(
             pb.set_message(format!("Page {}/{}", page + 1, total_pages));
             pb.set_position(((page as u64) * 100) / (total_pages as u64));
 
-            let result = wipe_single_ifd(tif_src, tif_dst, level, verbose, pb);
+            let result = wipe_single_ifd(input, tif_src, tif_dst, level, page, verbose, pb);
             if let Err(e) = result {
                 TIFFClose(tif_src);
                 TIFFClose(tif_dst);
@@ -1663,10 +1663,18 @@ fn wipe_single_file(
 
 /// Wipe a single IFD: clone structure and metadata, but replace pixel data
 /// with per-channel sorted values (same histogram, highly compressible).
+///
+/// Two strategies (see `src/wipe.rs`):
+/// - 8/16-bit integers: histogram streaming — O(1) memory, no sort, parallel
+///   tile decode.
+/// - everything else: read the plane into memory and parallel-sort it.
+#[allow(clippy::too_many_arguments)]
 unsafe fn wipe_single_ifd(
+    input_path: &Path,
     tif_src: *mut TIFF,
     tif_dst: *mut TIFF,
     level: Option<u32>,
+    page: u16,
     verbose: bool,
     pb: &ProgressBar,
 ) -> Result<()> {
@@ -1736,7 +1744,9 @@ unsafe fn wipe_single_ifd(
     TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h);
 
     TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, COMPRESSION_ZSTD as i32);
-    let zstd_level: i32 = level.unwrap_or(19).clamp(1, 22) as i32;
+    // Sorted data is near-RLE: high zstd levels barely shrink it further but
+    // cost a lot of encode time, so default lower than compress does
+    let zstd_level: i32 = level.unwrap_or(9).clamp(1, 22) as i32;
     TIFFSetField(tif_dst, TIFFTAG_ZSTD_LEVEL, zstd_level);
 
     // Sorted data is monotonic: a predictor turns it into near-constant deltas
@@ -1773,41 +1783,105 @@ unsafe fn wipe_single_ifd(
         ((w as usize) * (bps as usize) * interleaved_spp).div_ceil(8)
     };
 
-    const MAX_PLANE_SIZE: usize = 16 * 1024 * 1024 * 1024;
-    let plane_size = in_row_size
-        .checked_mul(h as usize)
-        .filter(|&s| s > 0 && s <= MAX_PLANE_SIZE)
-        .ok_or_else(|| anyhow!("Image plane too large to wipe in memory"))?;
+    let use_histogram = bps >= 8 && crate::wipe::Histogram::supports(bps, fmt);
 
     for s in 0..num_planes {
         if verbose {
-            log::info!("Wiping plane {}/{}", s + 1, num_planes);
+            log::info!(
+                "Wiping plane {}/{} ({})",
+                s + 1,
+                num_planes,
+                if use_histogram { "histogram" } else { "sort" }
+            );
         }
 
-        let mut plane = vec![0u8; plane_size];
+        if use_histogram {
+            // Pass 1: accumulate per-channel histograms only (O(1) memory)
+            pb.set_message(format!("Reading plane {}/{}", s + 1, num_planes));
+            let hist = if is_tiled {
+                histogram_tiled_plane(
+                    input_path,
+                    tif_src,
+                    w,
+                    h,
+                    interleaved_spp,
+                    bytes_per_sample,
+                    s,
+                    num_planes,
+                    page,
+                    bps,
+                    fmt,
+                )?
+            } else {
+                let in_scanline = TIFFScanlineSize(tif_src) as usize;
+                if in_scanline == 0 || in_scanline > in_row_size {
+                    return Err(anyhow!("Invalid scanline size: {}", in_scanline));
+                }
+                let mut hist = crate::wipe::Histogram::new(interleaved_spp, bps, fmt);
+                let mut row_buf = vec![0u8; in_row_size];
+                for row in 0..h {
+                    if TIFFReadScanline(tif_src, row_buf.as_mut_ptr() as *mut _, row, s) < 0 {
+                        return Err(anyhow!("Failed to read scanline {} sample {}", row, s));
+                    }
+                    hist.accumulate(&row_buf);
+                }
+                hist
+            };
 
-        if is_tiled {
-            read_tiled_plane(tif_src, &mut plane, w, h, in_row_size, s, num_planes)?;
-        } else {
-            let in_scanline = TIFFScanlineSize(tif_src) as usize;
-            if in_scanline == 0 || in_scanline > in_row_size {
-                return Err(anyhow!("Invalid scanline size: {}", in_scanline));
-            }
+            // Pass 2: synthesize the sorted rows directly from the histogram
+            pb.set_message(format!("Writing plane {}/{}", s + 1, num_planes));
+            let mut synth = hist.synthesizer();
+            let mut row_buf = vec![0u8; in_row_size];
             for row in 0..h {
-                let offset = (row as usize) * in_row_size;
-                if TIFFReadScanline(tif_src, plane[offset..].as_mut_ptr() as *mut _, row, s) < 0 {
-                    return Err(anyhow!("Failed to read scanline {} sample {}", row, s));
+                synth.synthesize_row(&mut row_buf);
+                if TIFFWriteScanline(tif_dst, row_buf.as_ptr() as *mut _, row, s) < 0 {
+                    return Err(anyhow!("Failed to write scanline {} sample {}", row, s));
                 }
             }
-        }
+        } else {
+            // Fallback: read the whole plane and sort it in memory
+            const MAX_PLANE_SIZE: usize = 16 * 1024 * 1024 * 1024;
+            let plane_size = in_row_size
+                .checked_mul(h as usize)
+                .filter(|&sz| sz > 0 && sz <= MAX_PLANE_SIZE)
+                .ok_or_else(|| anyhow!("Image plane too large to wipe in memory"))?;
 
-        pb.set_message(format!("Sorting plane {}/{}", s + 1, num_planes));
-        crate::wipe::wipe_buffer(&mut plane, interleaved_spp, bps, fmt);
+            let mut plane = vec![0u8; plane_size];
 
-        for row in 0..h {
-            let offset = (row as usize) * in_row_size;
-            if TIFFWriteScanline(tif_dst, plane[offset..].as_ptr() as *mut _, row, s) < 0 {
-                return Err(anyhow!("Failed to write scanline {} sample {}", row, s));
+            if is_tiled {
+                read_tiled_plane(
+                    input_path,
+                    tif_src,
+                    &mut plane,
+                    w,
+                    h,
+                    in_row_size,
+                    s,
+                    num_planes,
+                    page,
+                )?;
+            } else {
+                let in_scanline = TIFFScanlineSize(tif_src) as usize;
+                if in_scanline == 0 || in_scanline > in_row_size {
+                    return Err(anyhow!("Invalid scanline size: {}", in_scanline));
+                }
+                for row in 0..h {
+                    let offset = (row as usize) * in_row_size;
+                    if TIFFReadScanline(tif_src, plane[offset..].as_mut_ptr() as *mut _, row, s) < 0
+                    {
+                        return Err(anyhow!("Failed to read scanline {} sample {}", row, s));
+                    }
+                }
+            }
+
+            pb.set_message(format!("Sorting plane {}/{}", s + 1, num_planes));
+            crate::wipe::wipe_buffer(&mut plane, interleaved_spp, bps, fmt);
+
+            for row in 0..h {
+                let offset = (row as usize) * in_row_size;
+                if TIFFWriteScanline(tif_dst, plane[offset..].as_ptr() as *mut _, row, s) < 0 {
+                    return Err(anyhow!("Failed to write scanline {} sample {}", row, s));
+                }
             }
         }
     }
@@ -1816,8 +1890,142 @@ unsafe fn wipe_single_ifd(
     Ok(())
 }
 
-/// Read one full plane of a tiled image into a row-major buffer
+/// One tile's coordinates and valid (non-padding) region
+struct TileJob {
+    index: u32,
+    actual_width: usize,
+    actual_height: usize,
+}
+
+/// Build the tile job list for one plane, reading tile dimensions from the
+/// source handle. Returns (jobs, tile_width, tile_length).
+unsafe fn tile_jobs(
+    tif_src: *mut TIFF,
+    w: u32,
+    h: u32,
+    sample: u16,
+    num_planes: u16,
+) -> Result<(Vec<TileJob>, u32, u32)> {
+    let mut tile_width: u32 = 0;
+    let mut tile_length: u32 = 0;
+    TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_width);
+    TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_length);
+    if tile_width == 0 || tile_length == 0 {
+        return Err(anyhow!("Invalid tile dimensions"));
+    }
+
+    let tiles_across = w.div_ceil(tile_width);
+    let tiles_down = h.div_ceil(tile_length);
+    let tiles_per_plane = tiles_across * tiles_down;
+
+    let mut jobs = Vec::with_capacity((tiles_per_plane) as usize);
+    for tile_y in 0..tiles_down {
+        for tile_x in 0..tiles_across {
+            let tile_in_plane = tile_y * tiles_across + tile_x;
+            let index = if num_planes > 1 {
+                (sample as u32 * tiles_per_plane) + tile_in_plane
+            } else {
+                tile_in_plane
+            };
+            let start_x = (tile_x as usize) * (tile_width as usize);
+            let start_y = (tile_y as usize) * (tile_length as usize);
+            jobs.push(TileJob {
+                index,
+                actual_width: std::cmp::min(tile_width as usize, w as usize - start_x),
+                actual_height: std::cmp::min(tile_length as usize, h as usize - start_y),
+            });
+        }
+    }
+    Ok((jobs, tile_width, tile_length))
+}
+
+/// Open an independent read handle on the source file, positioned at `page`.
+/// Used by parallel tile workers (each worker gets its own handle, so there
+/// is no cross-thread or cross-file state).
+unsafe fn open_worker_handle(c_path: &CString, page: u16) -> Result<*mut TIFF> {
+    let tif = TIFFOpen(c_path.as_ptr(), CString::new("r")?.as_ptr());
+    if tif.is_null() {
+        return Err(anyhow!("Failed to open source TIFF (worker)"));
+    }
+    crate::metadata::register_geotiff_tags_ffi(tif);
+    if page > 0 && TIFFSetDirectory(tif, page) == 0 {
+        TIFFClose(tif);
+        return Err(anyhow!("Failed to set directory {} (worker)", page));
+    }
+    Ok(tif)
+}
+
+/// Accumulate per-channel histograms of one plane of a tiled image,
+/// decoding tiles in parallel. Tile padding (beyond the image edge) is
+/// excluded from the counts.
+#[allow(clippy::too_many_arguments)]
+unsafe fn histogram_tiled_plane(
+    input_path: &Path,
+    tif_src: *mut TIFF,
+    w: u32,
+    h: u32,
+    interleaved_spp: usize,
+    bytes_per_sample: usize,
+    sample: u16,
+    num_planes: u16,
+    page: u16,
+    bps: u16,
+    fmt: u16,
+) -> Result<crate::wipe::Histogram> {
+    let (jobs, tile_width, tile_length) = tile_jobs(tif_src, w, h, sample, num_planes)?;
+
+    let bytes_per_pixel = bytes_per_sample * interleaved_spp;
+    let tile_buffer_size = (tile_width as usize) * (tile_length as usize) * bytes_per_pixel;
+    let src_tile_row_size = (tile_width as usize) * bytes_per_pixel;
+
+    let c_path = CString::new(
+        input_path
+            .to_str()
+            .ok_or_else(|| anyhow!("Invalid input path"))?,
+    )?;
+
+    // Each task decodes a chunk of tiles with its own handle and merges a
+    // local histogram; chunking amortizes the open/close cost.
+    const TILES_PER_TASK: usize = 32;
+    jobs.par_chunks(TILES_PER_TASK)
+        .map(|chunk| -> Result<crate::wipe::Histogram> {
+            let mut hist = crate::wipe::Histogram::new(interleaved_spp, bps, fmt);
+            let tif = unsafe { open_worker_handle(&c_path, page)? };
+            let mut tile_buf = vec![0u8; tile_buffer_size];
+            for job in chunk {
+                let read = unsafe {
+                    crate::ffi::TIFFReadEncodedTile(
+                        tif,
+                        job.index,
+                        tile_buf.as_mut_ptr() as *mut _,
+                        tile_buffer_size as u32,
+                    )
+                };
+                if read < 0 {
+                    unsafe { TIFFClose(tif) };
+                    return Err(anyhow!("Failed to read tile {}", job.index));
+                }
+                let valid_row = job.actual_width * bytes_per_pixel;
+                for row in 0..job.actual_height {
+                    let start = row * src_tile_row_size;
+                    hist.accumulate(&tile_buf[start..start + valid_row]);
+                }
+            }
+            unsafe { TIFFClose(tif) };
+            Ok(hist)
+        })
+        .try_reduce(
+            || crate::wipe::Histogram::new(interleaved_spp, bps, fmt),
+            |a, b| Ok(a.merge(b)),
+        )
+}
+
+/// Read one full plane of a tiled image into a row-major buffer, decoding
+/// one band (horizontal row of tiles) per parallel task. Bands map to
+/// disjoint chunks of the plane, so workers never overlap.
+#[allow(clippy::too_many_arguments)]
 unsafe fn read_tiled_plane(
+    input_path: &Path,
     tif_src: *mut TIFF,
     plane: &mut [u8],
     w: u32,
@@ -1825,6 +2033,7 @@ unsafe fn read_tiled_plane(
     in_row_size: usize,
     sample: u16,
     num_planes: u16,
+    page: u16,
 ) -> Result<()> {
     let mut tile_width: u32 = 0;
     let mut tile_length: u32 = 0;
@@ -1843,41 +2052,60 @@ unsafe fn read_tiled_plane(
     let tiles_per_plane = tiles_across * tiles_down;
 
     let tile_buffer_size = (tile_width as usize) * (tile_length as usize) * bytes_per_pixel;
-    let mut tile_buf = vec![0u8; tile_buffer_size];
     let src_tile_row_size = (tile_width as usize) * bytes_per_pixel;
+    let band_size = in_row_size * (tile_length as usize);
 
-    for tile_y in 0..tiles_down {
-        for tile_x in 0..tiles_across {
-            let tile_in_plane = tile_y * tiles_across + tile_x;
-            let tile_index = if num_planes > 1 {
-                (sample as u32 * tiles_per_plane) + tile_in_plane
-            } else {
-                tile_in_plane
-            };
+    let c_path = CString::new(
+        input_path
+            .to_str()
+            .ok_or_else(|| anyhow!("Invalid input path"))?,
+    )?;
 
-            if crate::ffi::TIFFReadEncodedTile(
-                tif_src,
-                tile_index,
-                tile_buf.as_mut_ptr() as *mut _,
-                tile_buffer_size as u32,
-            ) < 0
-            {
-                return Err(anyhow!("Failed to read tile {}", tile_index));
+    plane
+        .par_chunks_mut(band_size)
+        .enumerate()
+        .map(|(tile_y, band)| -> Result<()> {
+            let tif = unsafe { open_worker_handle(&c_path, page)? };
+            let mut tile_buf = vec![0u8; tile_buffer_size];
+
+            let start_y = tile_y * (tile_length as usize);
+            let band_rows = std::cmp::min(tile_length as usize, h as usize - start_y);
+
+            for tile_x in 0..tiles_across {
+                let tile_in_plane = (tile_y as u32) * tiles_across + tile_x;
+                let tile_index = if num_planes > 1 {
+                    (sample as u32 * tiles_per_plane) + tile_in_plane
+                } else {
+                    tile_in_plane
+                };
+
+                let read = unsafe {
+                    crate::ffi::TIFFReadEncodedTile(
+                        tif,
+                        tile_index,
+                        tile_buf.as_mut_ptr() as *mut _,
+                        tile_buffer_size as u32,
+                    )
+                };
+                if read < 0 {
+                    unsafe { TIFFClose(tif) };
+                    return Err(anyhow!("Failed to read tile {}", tile_index));
+                }
+
+                let start_x = (tile_x as usize) * (tile_width as usize);
+                let actual_width = std::cmp::min(tile_width as usize, w as usize - start_x);
+
+                for row in 0..band_rows {
+                    let src_start = row * src_tile_row_size;
+                    let dst_start = row * in_row_size + start_x * bytes_per_pixel;
+                    let copy_len = actual_width * bytes_per_pixel;
+                    band[dst_start..dst_start + copy_len]
+                        .copy_from_slice(&tile_buf[src_start..src_start + copy_len]);
+                }
             }
-
-            let start_x = (tile_x as usize) * (tile_width as usize);
-            let start_y = (tile_y as usize) * (tile_length as usize);
-            let actual_width = std::cmp::min(tile_width as usize, w as usize - start_x);
-            let actual_height = std::cmp::min(tile_length as usize, h as usize - start_y);
-
-            for row in 0..actual_height {
-                let src_start = row * src_tile_row_size;
-                let dst_start = (start_y + row) * in_row_size + start_x * bytes_per_pixel;
-                let copy_len = actual_width * bytes_per_pixel;
-                plane[dst_start..dst_start + copy_len]
-                    .copy_from_slice(&tile_buf[src_start..src_start + copy_len]);
-            }
-        }
-    }
+            unsafe { TIFFClose(tif) };
+            Ok(())
+        })
+        .collect::<Result<Vec<()>>>()?;
     Ok(())
 }

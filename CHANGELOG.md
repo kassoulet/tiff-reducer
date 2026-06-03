@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **`wipe` command**: Replaces image content with synthetic data (per-channel sorted pixel values). The per-channel histogram — and therefore min/max/mean/stdDev — is preserved exactly, while the spatial content is destroyed and the output becomes highly compressible (Zstd + predictor). Useful for sharing statistically representative test files without disclosing the actual imagery.
 
+### Performance
+- **Histogram streaming for `wipe`** (8/16-bit integer samples): per-channel value counts are accumulated instead of materializing and sorting the image plane; the sorted output is synthesized directly from the histogram. Memory drops from O(plane) to O(1) and the 16 GiB plane cap no longer applies on this path.
+- **Parallel tile decode for `wipe`**: tiled sources are decoded with rayon across independent libtiff handles.
+- **Parallel sorts**: the 32/64-bit and float wipe fallback now uses rayon `par_sort_unstable`.
+- **Wipe default Zstd level lowered 19 → 9**: sorted output is near-RLE, so high levels cost encode time for negligible size gain (`-l` still overrides).
+- Measured: 102400×49152 u8 tiled Zstd file: 45 min / 5.9 GB RSS → **2 min 14 s / 66 MB RSS**; 3762×3613 u16 tiled LZW: 16 s → **0.3 s**.
+
 ### Fixed
 - Added `dscf0013.tif` (YCbCr with 2,1 subsampling) to the integration test skip list; it is rejected since the YCbCr subsampling guard was introduced.
 
