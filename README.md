@@ -2,9 +2,15 @@
 
 A Rust CLI tool for optimizing TIFF files using high-efficiency codecs (Zstd/LZMA/LERC) while strictly preserving all metadata (GeoTIFF, ICC, OME-XML, etc.).
 
-## Features
+## Features in a glance
 
-> One single executable, no dependencies, no configuration files. No need to install any additional software. No need to configure anything.
+- Several uses cases:
+  - Recompression with modern methods of legacy images
+  - Even more compression using lossy methods and/or quantization
+  - Un-compression to reduce storage of changing images and git delta-compression
+  - Wiping of image content while conserving same statistics and metadata
+
+- One single executable, no dependencies, no configuration files. No need to install any additional software. No need to configure anything.
 
 ### Compression
 - **Multiple Codecs**: Zstd, LZMA, Deflate, LZW, JPEG, WebP, LERC, **Uncompressed**
@@ -25,7 +31,7 @@ A Rust CLI tool for optimizing TIFF files using high-efficiency codecs (Zstd/LZM
 - **Multi-page TIFF**: Iterates through all IFDs (pages)
 - **Tiled TIFF**: Auto-detection and tiled processing
 - **BigTIFF**: Automatic handling of files >4GB
-- **Quantization**: Convert float32/int16 to uint8
+- **Quantization**: Optionally convert float32/int16 to uint8
 
 ### Testing & Quality
 - **Rust Integration Tests**: 10/10 passing (compression, metadata, error handling, uncompressed format)
