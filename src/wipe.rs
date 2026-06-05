@@ -94,6 +94,14 @@ impl Histogram {
         self
     }
 
+    /// Total number of samples counted across all channels. Used to verify
+    /// that pass 1 (accumulation) saw exactly as many samples as pass 2
+    /// (synthesis) will emit, so a count mismatch fails loudly instead of
+    /// silently zero-filling the deficit.
+    pub fn total(&self) -> u64 {
+        self.counts.iter().flat_map(|c| c.iter()).sum()
+    }
+
     fn num_buckets(&self) -> usize {
         if self.bps == 8 {
             256
