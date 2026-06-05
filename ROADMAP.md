@@ -4,25 +4,38 @@ This document lists future features and known limitations to address in future r
 
 ## Current Release: v0.4.0
 
+### Completed in the v0.4.0 cycle
+
+**Wipe correctness hardening** (from the code review — all 9 findings addressed):
+- Reject sub-byte (1/2/4-bit) and non-byte-aligned (≥8-bit, e.g. 12-bit) images
+  in `wipe`, which the byte-level sort can't round-trip while preserving the
+  per-channel histogram.
+- Reject multiple inputs with a single `--output` file (was a parallel
+  write/rename race) in both `wipe` and `compress`.
+- Verify the histogram sample count before synthesis so a short/truncated tile
+  can no longer silently zero-fill pixels.
+
+**Cleanup / perf:** shared `count_tiff_pages` (via `TIFFNumberOfDirectories`),
+`new_file_progress`/`resolve_target_output` and `TileGeometry` dedup, run-length
+single-channel synthesis, in-place plane sort. (Deeper compress/wipe dedup is
+still open — see Future Enhancements.)
+
+**Tooling:** `scripts/prek-env.sh` routes prek's cargo hooks through a consistent
+rustup toolchain + private target dir (works around the distro `E0514`).
+
 ### Security Remediation (In Progress)
 
 **Security Audit Completed:** March 2026 (18 issues identified)
 
 #### Phase 1: Critical Fixes (Immediate - v0.4.0)
-- ⚠️ **Path Traversal Vulnerability** (main.rs:268-278)
-  - User-controlled filenames can write outside intended directory
-  - Fix: Sanitize filenames before path joining
-  - Impact: Could allow writing to arbitrary filesystem locations
-
-- ⚠️ **Unchecked TIFFSetField Return Value** (metadata.rs:47-50)
-  - Failed set operations leave TIFF in inconsistent state
-  - Fix: Check return values and handle errors
-  - Impact: Memory corruption potential
+- ✅ **Path Traversal Vulnerability** — DONE: `sanitize_filename()` rejects
+  `..`/absolute/separator components; applied in `resolve_target_output()`.
+- ✅ **Unchecked TIFFSetField Return Value** — DONE: `metadata.rs` checks
+  `TIFFSetField(...) == 0` for colormap / extrasamples / ICC and errors out.
 
 #### Phase 2: High Severity (2 weeks - v0.4.1)
-- ⚠️ **Buffer Overflow via Unvalidated Scanline Size** (main.rs:693-701)
-  - `TIFFScanlineSize` returns untrusted value from file headers
-  - Fix: Add bounds checking before allocation
+- ✅ **Buffer Overflow via Unvalidated Scanline Size** — DONE: `TIFFScanlineSize`
+  is validated against the computed row size before use (3 sites in `main.rs`).
 
 - ⚠️ **Null Pointer Dereference in analyze_file** (main.rs:183-203)
   - `TIFFGetField` return values not checked
@@ -35,14 +48,15 @@ This document lists future features and known limitations to address in future r
 - ⚠️ **Integer Overflow in Tiled Image Processing** (main.rs:800-805)
   - Multiplication can overflow for large tiles
   - Fix: Use `checked_mul()` for all size calculations
+  - Partial: the wipe plane size uses `checked_mul`; the tiled `tile_buffer_size`
+    computations in the compress/wipe tiled readers are still unchecked.
 
 - ⚠️ **Missing Bounds Check in Tile Processing** (main.rs:827-832)
   - Buffer access without proper bounds validation
   - Fix: Add overflow-safe bounds checking
 
-- ⚠️ **Unvalidated Compression Level Input** (main.rs:637-646)
-  - No validation before passing to libtiff
-  - Fix: Add input validation at CLI parsing level
+- ✅ **Unvalidated Compression Level Input** — DONE: levels are clamped per codec
+  before reaching libtiff (zstd `1..=22`, lzma `1..=9`, webp/jpeg `1..=100`).
 
 #### Phase 3: Medium Severity (1 month - v0.4.2)
 - ⚠️ **Information Leakage in Error Messages** (main.rs:253-258)
