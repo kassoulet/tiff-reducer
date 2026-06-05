@@ -23,7 +23,11 @@ hooks = [
   {
     id = "cargo-check",
     name = "Cargo Check",
-    entry = "cargo check",
+    # Compiling hooks run through scripts/prek-env.sh, which selects a consistent
+    # rustup `stable` toolchain and a hook-private target dir. This works around a
+    # distro rust package whose rustc/clippy-driver have mismatched version
+    # metadata (cargo clippy -> E0514). See that script for details.
+    entry = "./scripts/prek-env.sh cargo check",
     language = "system",
     types = ["rust"],
     pass_filenames = false,
@@ -32,7 +36,7 @@ hooks = [
   {
     id = "cargo-clippy",
     name = "Cargo Clippy",
-    entry = "cargo clippy -- -D warnings",
+    entry = "./scripts/prek-env.sh cargo clippy -- -D warnings",
     language = "system",
     types = ["rust"],
     pass_filenames = false,
@@ -50,7 +54,7 @@ hooks = [
   {
     id = "cargo-test",
     name = "Cargo Test (All Tests + Report)",
-    entry = "./scripts/run-tests.sh",
+    entry = "./scripts/prek-env.sh ./scripts/run-tests.sh",
     language = "system",
     types = ["rust"],
     pass_filenames = false,
