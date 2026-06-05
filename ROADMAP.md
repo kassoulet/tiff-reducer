@@ -28,11 +28,11 @@ rustup toolchain + private target dir (works around the distro `E0514`).
 Surfaced by analyzing `tests/README.md` verification failures and confirmed with
 GDAL band checksums. Full detail: `tests/FAILED_TESTS_ANALYSIS.md`.
 
-- 🔴 **1-bit (sub-byte) tiled images are corrupted by `compress`** — data loss.
-  `tiled-gray-i1.tif` round-trips to a different image (GDAL checksum 934 → 74).
-  The compress tiled reader (`process_tiled_image`) assumes a whole-byte sample
-  stride and mis-unpacks sub-byte tiled data. The wipe path already rejects
-  sub-byte tiled input; the compress path must do the same or bit-unpack correctly.
+- ✅ **1-bit (sub-byte) tiled images were corrupted by `compress`** — FIXED.
+  `process_tiled_image` now computes tile/row sizes in packed bits, so sub-byte
+  tiled data unpacks correctly when tile rows are byte-aligned (and the rare
+  non-byte-aligned case is rejected rather than corrupted). `tiled-gray-i1.tif`
+  round-trips identically again (GDAL checksum 934 == 934).
 - 🟠 **Overviews / reduced-resolution sub-IFDs are dropped** — `usda_naip_256_webp_z3.tif`
   (base bands preserved, pyramid overviews lost); likely also `subsubifds.tif`
   (SubIFD chains). Preserve them, or document the limitation.

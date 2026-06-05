@@ -79,13 +79,14 @@ per-frame instead of ImageMagick `compare`. (Tracked as a testing improvement.)
 
 ### B2. Genuine issues
 
-#### 🔴 1-bit (sub-byte) **tiled** images are corrupted — `tiled-gray-i1.tif`
-- GDAL checksum **934 (orig) → 74 (comp)** — real pixel corruption.
-- Root cause: the compress tiled reader (`process_tiled_image`) assumes a
-  whole-byte sample stride, so 1-bit tiled data is mis-unpacked. (The wipe path
-  already *rejects* sub-byte tiled input; the compress path does not — it should
-  either reject or correctly bit-unpack.)
-- **This is a real correctness bug**, not a verifier artifact.
+#### ✅ 1-bit (sub-byte) **tiled** images were corrupted — `tiled-gray-i1.tif` (FIXED)
+- Was: GDAL checksum **934 (orig) → 74 (comp)** — real pixel corruption.
+- Root cause: the compress tiled reader (`process_tiled_image`) assumed a
+  whole-byte sample stride, so 1-bit tiled data was mis-unpacked.
+- **Fixed:** `process_tiled_image` now computes tile/row sizes in packed bits
+  (identical to the byte layout for bps ≥ 8); byte-aligned sub-byte tiles unpack
+  correctly and the rare non-byte-aligned case is rejected. `tiled-gray-i1.tif`
+  now round-trips identically (934 == 934).
 
 #### 🟠 Overviews / reduced-resolution sub-IFDs are dropped — `usda_naip_256_webp_z3.tif`
 - Base-resolution bands are **identical** (46042/26416/45577/42149 match), but the
@@ -115,8 +116,8 @@ equality.
 
 ## Summary of action items (genuine)
 
-1. **Fix 1-bit tiled compression** (`tiled-gray-i1.tif`) — reject or correctly
-   bit-unpack sub-byte tiled images in the compress path.
+1. ~~**Fix 1-bit tiled compression** (`tiled-gray-i1.tif`)~~ — ✅ DONE
+   (`process_tiled_image` now bit-unpacks sub-byte tiled images correctly).
 2. **Preserve overviews / sub-IFDs** (`usda_naip_256_webp_z3.tif`, `subsubifds.tif`).
 3. **Preserve SGILOG compression for LogLuv** (`off_luv24/32.tif`).
 4. **Strengthen `test-report` verification** — use GDAL checksums / per-frame diff
