@@ -1312,26 +1312,37 @@ unsafe fn process_tiled_image(
         pb.println(format!("Tile dimensions: {}x{}", tile_width, tile_length));
     }
 
-    let bytes_per_sample = (bps as usize).div_ceil(8);
-    let bytes_per_pixel = bytes_per_sample
-        * (if planar == PLANARCONFIG_SEPARATE {
-            1
-        } else {
-            spp as usize
-        });
-    let in_row_size = (w as usize) * bytes_per_pixel;
+    // Channels packed into one pixel for PLANARCONFIG_CONTIG; one per plane for SEPARATE.
+    let pixel_spp = if planar == PLANARCONFIG_SEPARATE {
+        1
+    } else {
+        spp as usize
+    };
+    // Work in packed bits so sub-byte (1/2/4-bit) tiled data unpacks correctly.
+    // For bps >= 8 this is identical to the previous byte-per-pixel layout.
+    let bits_per_pixel = (bps as usize) * pixel_spp;
+    let in_row_size = (w as usize * bits_per_pixel).div_ceil(8);
+
+    // Sub-byte data is only handled when each tile row is a whole number of bytes,
+    // so tiles stay byte-aligned in the destination row. A non-aligned sub-byte
+    // tile width would require bit-shifting to merge tiles, which we don't
+    // implement; reject it rather than silently corrupt the image.
+    if !bits_per_pixel.is_multiple_of(8) && !(tile_width as usize * bits_per_pixel).is_multiple_of(8)
+    {
+        return Err(anyhow!(
+            "Sub-byte tiled images with non-byte-aligned tile rows are not supported \
+             (bps={}, tile_width={})",
+            bps,
+            tile_width
+        ));
+    }
 
     if in_row_size > MAX_SCANLINE_SIZE {
         return Err(anyhow!("Input row size too large"));
     }
 
     let out_row_size = if quantize {
-        (w as usize)
-            * (if planar == PLANARCONFIG_SEPARATE {
-                1
-            } else {
-                spp as usize
-            })
+        (w as usize) * pixel_spp
     } else {
         in_row_size
     };
@@ -1342,7 +1353,8 @@ unsafe fn process_tiled_image(
     let geom = TileGeometry::new(w, h, tile_width, tile_length);
     let tiles_down = geom.tiles_down;
 
-    let tile_buffer_size = (tile_width as usize) * (tile_length as usize) * bytes_per_pixel;
+    let tile_row_size = (tile_width as usize * bits_per_pixel).div_ceil(8);
+    let tile_buffer_size = tile_row_size * (tile_length as usize);
 
     // Use a thread-local TIFF handle for parallel decompression
     let c_path = CString::new(input_path.to_str().unwrap())?;
@@ -1436,11 +1448,12 @@ unsafe fn process_tiled_image(
                     h as usize - (tile_y as usize * tile_length as usize),
                 );
 
-                let src_tile_row_size = (tile_width as usize) * bytes_per_pixel;
+                // Byte-aligned because the guard above ensures tile rows (and
+                // hence every tile's start column) fall on byte boundaries.
                 for row in 0..actual_height {
-                    let src_start = row * src_tile_row_size;
-                    let dst_start = row * in_row_size + (start_x * bytes_per_pixel);
-                    let copy_len = actual_width * bytes_per_pixel;
+                    let src_start = row * tile_row_size;
+                    let dst_start = row * in_row_size + (start_x * bits_per_pixel) / 8;
+                    let copy_len = (actual_width * bits_per_pixel).div_ceil(8);
                     image_strip[dst_start..dst_start + copy_len]
                         .copy_from_slice(&tile_buf[src_start..src_start + copy_len]);
                 }
