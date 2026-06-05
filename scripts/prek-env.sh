@@ -7,9 +7,12 @@
 # E0514 ("found crate compiled by an incompatible version of rustc"). When a
 # rustup `stable` toolchain is available we prepend its bin dir to PATH so cargo,
 # rustc and clippy-driver all resolve to the same (consistent) toolchain. We also
-# build into a hook-private CARGO_TARGET_DIR so this doesn't fight a different
-# toolchain's artifacts in a shared/global target dir. On machines without rustup
-# (or without a `stable` toolchain) this is a no-op and the ambient cargo is used.
+# build into a hook-private CARGO_TARGET_DIR so this rustup build doesn't fight the
+# interactive shell's (distro) artifacts in the shared target dir. That dir lives
+# under $HOME/target (NOT inside the repo): the repo is on a synced drive, so an
+# in-repo target tree would be uploaded/synced. On machines without rustup (or
+# without a `stable` toolchain) the toolchain step is a no-op and the ambient
+# cargo is used.
 #
 # Usage: scripts/prek-env.sh <command> [args...]
 #   e.g. scripts/prek-env.sh cargo clippy -- -D warnings
@@ -23,6 +26,7 @@ if command -v rustup >/dev/null 2>&1; then
     fi
 fi
 
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target/prek}"
+# Default to a subdir of the global target dir (outside the repo / synced drive).
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/target/prek}"
 
 exec "$@"
