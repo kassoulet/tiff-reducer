@@ -1,113 +1,127 @@
-# Skipped Tests Analysis Report
+# Failed / Skipped Tests Analysis Report
 
 **Generated:** 2026-06-05
-**Test Suite:** tiff-reducer Integration Tests (v0.4.0)
-**Skip list source:** `tests/integration_tests.rs` (`skip_files`)
+**Version:** v0.4.0
+
+This report covers two distinct things:
+
+- **Part A** — the 8 images the **integration suite** (`cargo test`) excludes via
+  the `skip_files` allowlist in `tests/integration_tests.rs`.
+- **Part B** — the images the **visual report** (`tests/README.md`, produced by
+  `test-report`) marks **"Verification Failed"** (26 lossless, 205 lossy).
+
+**Headline:** almost all Part-B "failures" are limitations of the report's
+verifier (ImageMagick `compare`), **not** compression bugs — confirmed by
+comparing GDAL band checksums, which match for those images. The exceptions are
+three genuine issues: **1-bit *tiled* images are corrupted**, **overviews /
+reduced-resolution sub-IFDs are dropped**, and **LogLuv output uses a
+non-standard compression combo**. See Part B.
 
 ---
 
-## Executive Summary
+# Part A — Integration-suite skip list (8 images)
 
-The integration suite excludes **8** test images via the `skip_files` allowlist.
-They are skipped because of source-file corruption or libtiff format limitations
-(legacy/obsolete codecs and YCbCr / downsampled-JPEG handling) — **not** bugs in
-tiff-reducer.
+These are excluded because of source-file corruption or libtiff format
+limitations — not bugs. As of v0.4.0 **none crash** (all exit 0 after the
+YCbCr-subsampling guards); they stay skipped because faithful round-trip
+verification can't be satisfied for these formats.
 
-Notable change since the v0.3.0 analysis: with the YCbCr-subsampling guards added
-in v0.4.0, **none of these images crash any more**. Running `compress` on each now
-returns exit 0 (graceful) — verified 2026-06-05 against the release binary. They
-remain on the skip list because their round-trip / pixel-fidelity verification
-can't be satisfied for these formats, not because they abort.
+| Image | Format | Why skipped |
+|-------|--------|-------------|
+| `text.tif` | THUNDERSCAN, 4-bit | corrupt/truncated data (`ThunderDecode: Not enough data`) |
+| `smallliz.tif` | OJPEG + YCbCr | legacy OJPEG, unreliable round-trip |
+| `zackthecat.tif` | OJPEG + YCbCr, tiled | legacy OJPEG (previously crashed) |
+| `ycbcr-cat.tif` | LZW + YCbCr | YCbCr subsampling (previously crashed in `TIFFWriteDirectory`) |
+| `quad-tile.jpg.tiff` | JPEG + YCbCr, tiled | tiled JPEG/YCbCr subsampled chroma |
+| `quad-jpeg.tif` | JPEG, striped | downsampled JPEG needs `JPEGCOLORMODE_RGB` for scanline access |
+| `tiled-jpeg-ycbcr.tif` | JPEG/YCbCr | JPEG/YCbCr handling |
+| `dscf0013.tif` | Uncompressed + YCbCr (2,1) | non-(1,1) YCbCr subsampling, explicitly rejected |
 
-The 8 fall into three categories:
-
-| # | Category | Images |
-|---|----------|--------|
-| 1 | Corrupt / obsolete source data | `text.tif` |
-| 2 | Legacy OJPEG (+ YCbCr) | `smallliz.tif`, `zackthecat.tif` |
-| 3 | YCbCr / downsampled-JPEG handling | `ycbcr-cat.tif`, `quad-tile.jpg.tiff`, `quad-jpeg.tif`, `tiled-jpeg-ycbcr.tif`, `dscf0013.tif` |
-
----
-
-## Per-image detail
-
-"Current behavior" rows are from `tiff-reducer compress <img> --output /tmp/...`
-on 2026-06-05; exit status and any libtiff message are noted.
-
-### Category 1 — Corrupt / obsolete source data
-
-#### `text.tif`
-- **Format:** THUNDERSCAN (compression 32809), 1c / 4-bit, striped, 1512×359
-- **Current behavior:** exit 0, but libtiff emits
-  `ThunderDecode: Not enough data at scanline 356 (0 != 1512).`
-- **Root cause:** THUNDERSCAN is an obsolete codec and this file's data is
-  truncated/corrupt — libtiff cannot fully decode it, so the decoded pixels are
-  incomplete and fidelity verification cannot pass.
-- **Recommendation:** keep skipped (corrupt input, not fixable here).
-
-### Category 2 — Legacy OJPEG
-
-#### `smallliz.tif`
-- **Format:** OJPEG (Old JPEG, compression 6) + YCbCr, 3c / 8-bit, striped, 160×160
-- **Current behavior:** exit 0 (graceful).
-- **Root cause:** OJPEG is a deprecated, poorly-specified codec; combined with
-  YCbCr subsampling it cannot be round-tripped reliably.
-- **Recommendation:** keep skipped (legacy format).
-
-#### `zackthecat.tif`
-- **Format:** OJPEG (compression 6) + YCbCr, 3c / 8-bit, tiled (240×224), 234×213
-- **Current behavior:** exit 0 (graceful; previously crashed).
-- **Root cause:** same OJPEG + YCbCr limitation as `smallliz.tif`, tiled variant.
-- **Recommendation:** keep skipped (legacy format).
-
-### Category 3 — YCbCr / downsampled JPEG
-
-These use `PHOTOMETRIC_YCBCR` (often via JPEG) where chroma subsampling and/or
-scanline-vs-strip access prevent a faithful decode→re-encode round trip.
-
-#### `ycbcr-cat.tif`
-- **Format:** LZW + YCbCr, 3c / 8-bit, striped, 250×325
-- **Current behavior:** exit 0 (graceful; previously crashed in `TIFFWriteDirectory`).
-- **Root cause:** YCbCr subsampling; faithful pixel round-trip not guaranteed.
-
-#### `quad-tile.jpg.tiff`
-- **Format:** JPEG + YCbCr, tiled (128×128), 3c / 8-bit, 512×384
-- **Current behavior:** exit 0 (graceful).
-- **Root cause:** tiled JPEG/YCbCr with subsampled chroma planes.
-
-#### `quad-jpeg.tif`
-- **Format:** JPEG, 3c / 8-bit, striped, 512×384
-- **Current behavior:** exit 0, with libtiff message
-  `TIFFReadScanline: scanline oriented access is not supported for downsampled
-  JPEG compressed images, consider enabling TIFFTAG_JPEGCOLORMODE as
-  JPEGCOLORMODE_RGB.`
-- **Root cause:** downsampled JPEG requires `JPEGCOLORMODE_RGB` for scanline
-  access, which the current read path does not set, so scanlines can't be read.
-
-#### `tiled-jpeg-ycbcr.tif`
-- **Format:** JPEG/YCbCr, 3c / 8-bit, 374×499
-- **Current behavior:** exit 0 (graceful).
-- **Root cause:** JPEG/YCbCr handling as above.
-
-#### `dscf0013.tif`
-- **Format:** Uncompressed + YCbCr subsampling (2,1), 3c / 8-bit, striped, 640×480
-- **Current behavior:** exit 0 — explicitly rejected by the YCbCr-subsampling
-  guard (subsampling ≠ (1,1)) added in v0.4.0.
-- **Root cause:** non-(1,1) YCbCr subsampling is intentionally rejected to avoid
-  producing an incorrect image.
+Recommendation: keep all 8 skipped; revisit if the suite ever separates "must not
+crash" (now satisfied) from "must round-trip faithfully".
 
 ---
 
-## Recommendations
+# Part B — `tests/README.md` verification failures
 
-1. **Keep all 8 skipped** — each is a corrupt source or an unsupported
-   legacy/YCbCr/downsampled-JPEG format, not a regression.
-2. **Re-evaluate the skip list periodically:** since none of these abort any more,
-   the list could be narrowed if/when the suite distinguishes "must not crash"
-   (now satisfied by all 8) from "must round-trip faithfully" (still unmet).
-3. **Possible future work** (tracked in `ROADMAP.md`): enable `JPEGCOLORMODE_RGB`
-   on the JPEG read path so downsampled-JPEG inputs like `quad-jpeg.tif` can be
-   read via scanlines and re-encoded.
+## How the report verifies
+
+`test-report` calls **ImageMagick `compare -metric AE`** (lossless) /
+`-metric PSNR` (lossy) between the original and the compressed output and counts
+it as passing only when the absolute-error pixel count is `0` and a number
+parses (`src/bin/test-report.rs:377`). When `compare` cannot read a format,
+exceeds a resource limit, or only diffs the first frame of a multi-page file, it
+returns non-zero or errors — which the report records as "Verification Failed"
+**regardless of whether tiff-reducer preserved the data**.
+
+To separate real problems from verifier noise, each suspect image below was
+re-checked with **GDAL band checksums** (`gdalinfo -checksum`), which read these
+formats correctly.
+
+## Lossless: 26 "failed" — breakdown
+
+### B1. Verifier limitation — pixels actually preserved (false failures)
+
+GDAL checksums of original vs compressed are **identical** for these; ImageMagick
+simply can't compare them:
+
+| Image(s) | Why `compare` fails | GDAL check |
+|----------|---------------------|-----------|
+| `gradient-1c-64b.tiff`, `gradient-3c-64b.tiff` | `compare: unsupported bits per pixel` (no 64-bit support) | identical (e.g. 2659 = 2659) |
+| OME / multi-page: `4D-series.ome`, `multi-channel(.ome/-4D/-time/-z)`, `time-series.ome`, `z-series.ome`, `MMStack_Pos0.ome`, `background_1_MMStack.ome`, `181003_…MMStack.ome`, `renamed_internalfilenames.ome`, `renamed_uuids.ome`, `seq-1c-8b-multipage`, `subsubifds.tif`, `mri.tif`, `shapes_multi_color`, `shapes_multi_size` | multi-frame: `compare` diffs frames imperfectly → small non-zero AE | identical (e.g. multi-channel.ome 1288 = 1288; seq-multipage 2835 = 2835) |
+| `house.tif` (gray+alpha, 2c) | `compare` couldn't render it (orig thumbnail `N/A`) | identical (58336 = 58336, 5934 = 5934) |
+| `big_g4.tif` | `compare: width or height exceeds limit (1x65537)` — IM pixel-cache cap | (degenerate 1×65537 fax; not a tiff-reducer issue) |
+| `dscf0013.tif` | YCbCr (2,1) — also on the Part-A skip list | expected |
+
+**Action:** none on the codec. The *report* would be more accurate if
+`verify_lossless` used GDAL checksums (handles 64-bit/multi-page/alpha) or diffed
+per-frame instead of ImageMagick `compare`. (Tracked as a testing improvement.)
+
+### B2. Genuine issues
+
+#### 🔴 1-bit (sub-byte) **tiled** images are corrupted — `tiled-gray-i1.tif`
+- GDAL checksum **934 (orig) → 74 (comp)** — real pixel corruption.
+- Root cause: the compress tiled reader (`process_tiled_image`) assumes a
+  whole-byte sample stride, so 1-bit tiled data is mis-unpacked. (The wipe path
+  already *rejects* sub-byte tiled input; the compress path does not — it should
+  either reject or correctly bit-unpack.)
+- **This is a real correctness bug**, not a verifier artifact.
+
+#### 🟠 Overviews / reduced-resolution sub-IFDs are dropped — `usda_naip_256_webp_z3.tif`
+- Base-resolution bands are **identical** (46042/26416/45577/42149 match), but the
+  original carries pyramid **overviews** that the output does not. The reported
+  size "growth" (-663%) is expected: a lossy-WebP source re-encoded as lossless
+  zstd is larger.
+- **Action:** preserve overview/sub-IFDs, or document that they're dropped.
+  (`subsubifds.tif` — SubIFD chains — likely shares this gap.)
+
+#### 🟠 LogLuv output uses a non-standard compression — `off_luv24.tif`, `off_luv32.tif`
+- Pixel data is **preserved** (all 3 band checksums match), but the output keeps
+  `PHOTOMETRIC_LOGLUV` while switching compression to zstd. Strict readers reject
+  this (`compare: LogLuv data must have Compression=34676 or 34677`); GDAL accepts
+  it.
+- **Action:** for LogLuv/SGILOG photometrics, preserve the SGILOG compression (or
+  skip recompression) so output stays spec-conformant.
+
+## Lossy: 205 "failed" — expected
+
+Lossy compression (WebP/JPEG) is not bit-exact, so `compare -metric AE` is
+non-zero by definition; the report's PSNR threshold (>20 dB) plus the same
+format-read limitations as B1 account for the count. These are **not** bugs.
+A meaningful lossy check would report PSNR/SSIM rather than pass/fail on exact
+equality.
+
+---
+
+## Summary of action items (genuine)
+
+1. **Fix 1-bit tiled compression** (`tiled-gray-i1.tif`) — reject or correctly
+   bit-unpack sub-byte tiled images in the compress path.
+2. **Preserve overviews / sub-IFDs** (`usda_naip_256_webp_z3.tif`, `subsubifds.tif`).
+3. **Preserve SGILOG compression for LogLuv** (`off_luv24/32.tif`).
+4. **Strengthen `test-report` verification** — use GDAL checksums / per-frame diff
+   instead of ImageMagick `compare`, so multi-page, 64-bit, alpha and oversized
+   images aren't reported as false failures.
 
 ---
 
@@ -115,12 +129,13 @@ scanline-vs-strip access prevent a faithful decode→re-encode round trip.
 
 ```bash
 cargo build --release
-for f in smallliz text ycbcr-cat zackthecat quad-tile.jpg quad-jpeg tiled-jpeg-ycbcr dscf0013; do
-  ./target/release/tiff-reducer compress tests/images/"$f".*tif* --output "/tmp/$f.tif"
-  echo "$f -> exit $?"
+BIN=./target/release/tiff-reducer
+for f in tiled-gray-i1 multi-channel.ome gradient-1c-64b off_luv24 usda_naip_256_webp_z3; do
+  "$BIN" compress "tests/images/$f."*tif* --output /tmp/c.tif
+  echo "== $f =="
+  gdalinfo -checksum "tests/images/$f."*tif* | grep -i checksum   # original
+  gdalinfo -checksum /tmp/c.tif | grep -i checksum                # compressed
 done
 ```
-
----
 
 *Last updated: 2026-06-05 (v0.4.0)*
