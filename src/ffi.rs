@@ -52,6 +52,9 @@ extern "C" {
     // Re-read directory after registering tags
     pub fn TIFFReadDirectory(tif: *mut TIFF) -> c_int;
 
+    // Number of directories (pages); saves and restores the current directory
+    pub fn TIFFNumberOfDirectories(tif: *mut TIFF) -> u16;
+
     // Check if image is tiled
     pub fn TIFFIsTiled(tif: *mut TIFF) -> c_int;
     pub fn TIFFTileSize(tif: *mut TIFF) -> u32;

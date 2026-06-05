@@ -52,6 +52,48 @@ fn sanitize_filename(name: &std::ffi::OsStr) -> Option<String> {
     })
 }
 
+/// Create a per-file progress bar with the shared bar style and initial message.
+fn new_file_progress(m: &MultiProgress, message: String) -> ProgressBar {
+    let pb = m.add(ProgressBar::new(100));
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}% {msg}")
+            .unwrap(),
+    );
+    pb.set_position(0);
+    pb.set_message(message);
+    pb
+}
+
+/// Resolve the destination path for one input file given the optional
+/// `--output`. With a directory output, the input's filename is sanitized and
+/// joined; with a file output the path is used directly; with no output the
+/// input is overwritten in place. Returns `None` (after finishing `pb` with an
+/// error) when a directory output would produce an unsafe filename.
+fn resolve_target_output(
+    file_path: &Path,
+    output: &Option<PathBuf>,
+    pb: &ProgressBar,
+) -> Option<PathBuf> {
+    match output {
+        Some(out) if out.is_dir() => {
+            // Sanitize filename to prevent path traversal attacks
+            match sanitize_filename(file_path.file_name().unwrap_or(file_path.as_os_str())) {
+                Some(safe_name) => Some(out.join(safe_name)),
+                None => {
+                    pb.finish_with_message(format!(
+                        "Error: Invalid filename {:?}",
+                        file_path.file_name()
+                    ));
+                    None
+                }
+            }
+        }
+        Some(out) => Some(out.clone()),
+        None => Some(file_path.to_path_buf()),
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "tiff-reducer")]
 #[command(about = "Optimize TIFF files with high-efficiency codecs", long_about = None)]
@@ -381,6 +423,20 @@ fn compress_command(
 ) -> Result<()> {
     let files = expand_tiff_inputs(&input)?;
 
+    // With more than one input, --output must be a directory; otherwise every
+    // file would resolve to the same target (and temp) path and the parallel
+    // workers would race to write/rename it, corrupting the result.
+    if files.len() > 1 {
+        if let Some(ref out) = output {
+            if !out.is_dir() {
+                return Err(anyhow!(
+                    "Multiple input files require --output to be an existing directory, not a file: {:?}",
+                    out
+                ));
+            }
+        }
+    }
+
     let m = MultiProgress::new();
 
     // Use rayon for file-level parallelism with configurable job count
@@ -390,39 +446,17 @@ fn compress_command(
         .par_iter()
         .with_max_len(num_jobs)
         .for_each(|file_path| {
-            let pb = m.add(ProgressBar::new(100));
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}% {msg}",
-                    )
-                    .unwrap(),
+            let pb = new_file_progress(
+                &m,
+                format!(
+                    "Processing {:?}",
+                    file_path.file_name().unwrap_or(file_path.as_os_str())
+                ),
             );
-            pb.set_position(0);
-            pb.set_message(format!(
-                "Processing {:?}",
-                file_path.file_name().unwrap_or(file_path.as_os_str())
-            ));
 
-            let target_output = if let Some(ref out) = output {
-                if out.is_dir() {
-                    // Sanitize filename to prevent path traversal attacks
-                    match sanitize_filename(file_path.file_name().unwrap_or(file_path.as_os_str()))
-                    {
-                        Some(safe_name) => out.join(safe_name),
-                        None => {
-                            pb.finish_with_message(format!(
-                                "Error: Invalid filename {:?}",
-                                file_path.file_name()
-                            ));
-                            return;
-                        }
-                    }
-                } else {
-                    out.clone()
-                }
-            } else {
-                file_path.clone()
+            let target_output = match resolve_target_output(file_path, &output, &pb) {
+                Some(t) => t,
+                None => return,
             };
 
             match process_single_file(
@@ -497,20 +531,7 @@ fn process_single_file(
     let is_float = sample_format == SAMPLEFORMAT_IEEEFP;
 
     // Get IFD count
-    let mut total_pages = 0u16;
-    unsafe {
-        let c_path = CString::new(input.to_str().ok_or_else(|| anyhow!("Invalid path"))?)?;
-        let tif = TIFFOpen(c_path.as_ptr(), CString::new("r")?.as_ptr());
-        if !tif.is_null() {
-            loop {
-                total_pages += 1;
-                if TIFFReadDirectory(tif) == 0 {
-                    break;
-                }
-            }
-            TIFFClose(tif);
-        }
-    };
+    let total_pages = count_tiff_pages(input).unwrap_or(0);
 
     if verbose {
         log::info!(
@@ -776,6 +797,22 @@ fn get_tiff_info(path: &Path) -> Result<(u32, u32, u16, u16, u16)> {
 
         TIFFClose(tif);
         Ok((w, h, bps, spp, fmt))
+    }
+}
+
+/// Count the number of IFDs (pages) in a TIFF. Returns at least 1 for a valid
+/// file. Uses libtiff's `TIFFNumberOfDirectories`, which walks the directory
+/// chain once internally and restores the current directory.
+fn count_tiff_pages(path: &Path) -> Result<u16> {
+    let c_path = CString::new(path.to_str().ok_or_else(|| anyhow!("Invalid path"))?)?;
+    unsafe {
+        let tif = TIFFOpen(c_path.as_ptr(), CString::new("r")?.as_ptr());
+        if tif.is_null() {
+            return Err(anyhow!("Failed to open TIFF file: {:?}", path));
+        }
+        let pages = TIFFNumberOfDirectories(tif);
+        TIFFClose(tif);
+        Ok(pages)
     }
 }
 
@@ -1302,9 +1339,8 @@ unsafe fn process_tiled_image(
     let image_strip_size = in_row_size * (tile_length as usize);
     let mut image_strip = vec![0u8; image_strip_size];
 
-    let tiles_across = w.div_ceil(tile_width);
-    let tiles_down = h.div_ceil(tile_length);
-    let tiles_per_plane = tiles_across * tiles_down;
+    let geom = TileGeometry::new(w, h, tile_width, tile_length);
+    let tiles_down = geom.tiles_down;
 
     let tile_buffer_size = (tile_width as usize) * (tile_length as usize) * bytes_per_pixel;
 
@@ -1351,14 +1387,10 @@ unsafe fn process_tiled_image(
             image_strip.fill(0);
 
             // Prepare tile metadata for parallel decoding
-            let tile_indices: Vec<(u32, u32)> = (0..tiles_across)
+            let tile_indices: Vec<(u32, u32)> = (0..geom.tiles_across)
                 .map(|tile_x| {
-                    let tile_in_plane = tile_y * tiles_across + tile_x;
-                    let tile_index = if planar == PLANARCONFIG_SEPARATE {
-                        (s as u32 * tiles_per_plane) + tile_in_plane
-                    } else {
-                        tile_in_plane
-                    };
+                    let tile_index =
+                        geom.tile_index(tile_x, tile_y, s as u32, planar == PLANARCONFIG_SEPARATE);
                     (tile_x, tile_index)
                 })
                 .collect();
@@ -1500,6 +1532,20 @@ fn wipe_command(
 ) -> Result<()> {
     let files = expand_tiff_inputs(&input)?;
 
+    // With more than one input, --output must be a directory; otherwise every
+    // file would resolve to the same target (and temp) path and the parallel
+    // workers would race to write/rename it, corrupting the result.
+    if files.len() > 1 {
+        if let Some(ref out) = output {
+            if !out.is_dir() {
+                return Err(anyhow!(
+                    "Multiple input files require --output to be an existing directory, not a file: {:?}",
+                    out
+                ));
+            }
+        }
+    }
+
     let m = MultiProgress::new();
     let num_jobs = jobs.unwrap_or_else(num_cpus::get);
 
@@ -1507,38 +1553,17 @@ fn wipe_command(
         .par_iter()
         .with_max_len(num_jobs)
         .for_each(|file_path| {
-            let pb = m.add(ProgressBar::new(100));
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}% {msg}",
-                    )
-                    .unwrap(),
+            let pb = new_file_progress(
+                &m,
+                format!(
+                    "Wiping {:?}",
+                    file_path.file_name().unwrap_or(file_path.as_os_str())
+                ),
             );
-            pb.set_position(0);
-            pb.set_message(format!(
-                "Wiping {:?}",
-                file_path.file_name().unwrap_or(file_path.as_os_str())
-            ));
 
-            let target_output = if let Some(ref out) = output {
-                if out.is_dir() {
-                    match sanitize_filename(file_path.file_name().unwrap_or(file_path.as_os_str()))
-                    {
-                        Some(safe_name) => out.join(safe_name),
-                        None => {
-                            pb.finish_with_message(format!(
-                                "Error: Invalid filename {:?}",
-                                file_path.file_name()
-                            ));
-                            return;
-                        }
-                    }
-                } else {
-                    out.clone()
-                }
-            } else {
-                file_path.clone()
+            let target_output = match resolve_target_output(file_path, &output, &pb) {
+                Some(t) => t,
+                None => return,
             };
 
             match wipe_single_file(file_path, &target_output, level, verbose, &pb) {
@@ -1579,21 +1604,7 @@ fn wipe_single_file(
     let original_size = fs::metadata(input)?.len();
 
     // Get IFD count
-    let mut total_pages = 0u16;
-    unsafe {
-        let c_path = CString::new(input.to_str().ok_or_else(|| anyhow!("Invalid path"))?)?;
-        let tif = TIFFOpen(c_path.as_ptr(), CString::new("r")?.as_ptr());
-        if tif.is_null() {
-            return Err(anyhow!("Failed to open TIFF file: {:?}", input));
-        }
-        loop {
-            total_pages += 1;
-            if TIFFReadDirectory(tif) == 0 {
-                break;
-            }
-        }
-        TIFFClose(tif);
-    };
+    let total_pages = count_tiff_pages(input)?;
 
     let c_input = CString::new(
         input
@@ -1775,6 +1786,32 @@ unsafe fn wipe_single_ifd(
         1
     };
 
+    // Sample widths >= 8 that are not a whole number of bytes (e.g. 12-bit) are
+    // packed tightly by libtiff, but the read/sort path below assumes a
+    // whole-byte sample stride, so the data would be silently mis-unpacked and
+    // the histogram corrupted. Reject rather than produce wrong output.
+    if bps > 8 && bps % 8 != 0 {
+        return Err(anyhow!(
+            "{}-bit samples (not a multiple of 8) are not supported for wipe",
+            bps
+        ));
+    }
+
+    // Sub-byte (1/2/4-bit) data is wiped by sorting whole bytes. That only
+    // preserves the per-sample histogram when each byte holds whole samples of
+    // a single channel and rows carry no padding bits (i.e. the row is an exact
+    // number of bytes). Otherwise a byte-level sort mixes padding bits or
+    // channels into the counts, silently violating the preservation guarantee.
+    if bps < 8 && (interleaved_spp > 1 || ((w as usize) * (bps as usize)) % 8 != 0) {
+        return Err(anyhow!(
+            "Sub-byte images ({}-bit, {} interleaved channel(s), width {}) cannot be \
+             wiped while preserving the per-channel histogram",
+            bps,
+            interleaved_spp,
+            w
+        ));
+    }
+
     let bytes_per_sample = (bps as usize).div_ceil(8);
     let in_row_size = if bps >= 8 {
         (w as usize) * bytes_per_sample * interleaved_spp
@@ -1827,6 +1864,21 @@ unsafe fn wipe_single_ifd(
                 }
                 hist
             };
+
+            // Pass 2 emits exactly w*h*interleaved_spp samples per plane. If
+            // pass 1 counted a different number (e.g. a short/truncated tile
+            // decode), the synthesizer would silently zero-fill the deficit and
+            // corrupt the histogram. Verify the counts match and fail loudly.
+            let expected_samples = (w as u64) * (h as u64) * (interleaved_spp as u64);
+            if hist.total() != expected_samples {
+                return Err(anyhow!(
+                    "Histogram sample count mismatch on plane {} (counted {}, expected {}); \
+                     refusing to write corrupted output",
+                    s,
+                    hist.total(),
+                    expected_samples
+                ));
+            }
 
             // Pass 2: synthesize the sorted rows directly from the histogram
             pb.set_message(format!("Writing plane {}/{}", s + 1, num_planes));
@@ -1890,6 +1942,38 @@ unsafe fn wipe_single_ifd(
     Ok(())
 }
 
+/// Tiled-image layout, shared by the compress and wipe tile readers so the
+/// tile-count and tile-index arithmetic lives in one place.
+struct TileGeometry {
+    tiles_across: u32,
+    tiles_down: u32,
+    tiles_per_plane: u32,
+}
+
+impl TileGeometry {
+    fn new(w: u32, h: u32, tile_width: u32, tile_length: u32) -> Self {
+        let tiles_across = w.div_ceil(tile_width);
+        let tiles_down = h.div_ceil(tile_length);
+        TileGeometry {
+            tiles_across,
+            tiles_down,
+            tiles_per_plane: tiles_across * tiles_down,
+        }
+    }
+
+    /// libtiff tile index for tile `(tile_x, tile_y)` of plane `sample`. For
+    /// PLANARCONFIG_SEPARATE (`separate` = true) planes are stored
+    /// consecutively; otherwise there is a single interleaved plane.
+    fn tile_index(&self, tile_x: u32, tile_y: u32, sample: u32, separate: bool) -> u32 {
+        let tile_in_plane = tile_y * self.tiles_across + tile_x;
+        if separate {
+            sample * self.tiles_per_plane + tile_in_plane
+        } else {
+            tile_in_plane
+        }
+    }
+}
+
 /// One tile's coordinates and valid (non-padding) region
 struct TileJob {
     index: u32,
@@ -1914,19 +1998,12 @@ unsafe fn tile_jobs(
         return Err(anyhow!("Invalid tile dimensions"));
     }
 
-    let tiles_across = w.div_ceil(tile_width);
-    let tiles_down = h.div_ceil(tile_length);
-    let tiles_per_plane = tiles_across * tiles_down;
+    let geom = TileGeometry::new(w, h, tile_width, tile_length);
 
-    let mut jobs = Vec::with_capacity((tiles_per_plane) as usize);
-    for tile_y in 0..tiles_down {
-        for tile_x in 0..tiles_across {
-            let tile_in_plane = tile_y * tiles_across + tile_x;
-            let index = if num_planes > 1 {
-                (sample as u32 * tiles_per_plane) + tile_in_plane
-            } else {
-                tile_in_plane
-            };
+    let mut jobs = Vec::with_capacity(geom.tiles_per_plane as usize);
+    for tile_y in 0..geom.tiles_down {
+        for tile_x in 0..geom.tiles_across {
+            let index = geom.tile_index(tile_x, tile_y, sample as u32, num_planes > 1);
             let start_x = (tile_x as usize) * (tile_width as usize);
             let start_y = (tile_y as usize) * (tile_length as usize);
             jobs.push(TileJob {
@@ -2047,9 +2124,7 @@ unsafe fn read_tiled_plane(
     if bytes_per_pixel == 0 {
         return Err(anyhow!("Sub-byte tiled images are not supported for wipe"));
     }
-    let tiles_across = w.div_ceil(tile_width);
-    let tiles_down = h.div_ceil(tile_length);
-    let tiles_per_plane = tiles_across * tiles_down;
+    let geom = TileGeometry::new(w, h, tile_width, tile_length);
 
     let tile_buffer_size = (tile_width as usize) * (tile_length as usize) * bytes_per_pixel;
     let src_tile_row_size = (tile_width as usize) * bytes_per_pixel;
@@ -2071,13 +2146,9 @@ unsafe fn read_tiled_plane(
             let start_y = tile_y * (tile_length as usize);
             let band_rows = std::cmp::min(tile_length as usize, h as usize - start_y);
 
-            for tile_x in 0..tiles_across {
-                let tile_in_plane = (tile_y as u32) * tiles_across + tile_x;
-                let tile_index = if num_planes > 1 {
-                    (sample as u32 * tiles_per_plane) + tile_in_plane
-                } else {
-                    tile_in_plane
-                };
+            for tile_x in 0..geom.tiles_across {
+                let tile_index =
+                    geom.tile_index(tile_x, tile_y as u32, sample as u32, num_planes > 1);
 
                 let read = unsafe {
                     crate::ffi::TIFFReadEncodedTile(

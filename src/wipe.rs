@@ -94,6 +94,14 @@ impl Histogram {
         self
     }
 
+    /// Total number of samples counted across all channels. Used to verify
+    /// that pass 1 (accumulation) saw exactly as many samples as pass 2
+    /// (synthesis) will emit, so a count mismatch fails loudly instead of
+    /// silently zero-filling the deficit.
+    pub fn total(&self) -> u64 {
+        self.counts.iter().flat_map(|c| c.iter()).sum()
+    }
+
     fn num_buckets(&self) -> usize {
         if self.bps == 8 {
             256
@@ -147,10 +155,54 @@ impl Synthesizer<'_> {
         0
     }
 
-    /// Fill an interleaved output row with the next sorted values
+    /// Fill an interleaved output row with the next sorted values.
+    ///
+    /// For single-channel data (grayscale or one plane of separate data) the
+    /// output is one contiguous sorted run, so values are emitted in
+    /// run-length blocks (one fill per histogram bucket) rather than one
+    /// `next_value` call per sample. Interleaved multi-channel rows still go
+    /// sample-by-sample because adjacent samples belong to different channels.
     pub fn synthesize_row(&mut self, out: &mut [u8]) {
-        let spp = self.hist.counts.len();
-        if self.hist.bps == 8 {
+        let hist = self.hist;
+        let spp = hist.counts.len();
+        let bps8 = hist.bps == 8;
+
+        if spp == 1 {
+            let buckets = hist.num_buckets();
+            let counts = &hist.counts[0];
+            let st = &mut self.state[0];
+            let n = if bps8 { out.len() } else { out.len() / 2 };
+            let mut filled = 0usize;
+            while filled < n {
+                // Advance to the next bucket that still has samples to emit.
+                while st.0 < buckets && st.1 >= counts[hist.bucket_at(st.0)] {
+                    st.0 += 1;
+                    st.1 = 0;
+                }
+                if st.0 >= buckets {
+                    // Exhausted: only reachable if fewer samples were counted
+                    // than emitted (guarded upstream). Zero the remainder.
+                    if bps8 {
+                        out[filled..].fill(0);
+                    } else {
+                        out[filled * 2..].fill(0);
+                    }
+                    break;
+                }
+                let bucket = hist.bucket_at(st.0);
+                let take = (counts[bucket] - st.1).min((n - filled) as u64) as usize;
+                if bps8 {
+                    out[filled..filled + take].fill(bucket as u8);
+                } else {
+                    let bytes = (bucket as u16).to_ne_bytes();
+                    for s in out[filled * 2..(filled + take) * 2].chunks_exact_mut(2) {
+                        s.copy_from_slice(&bytes);
+                    }
+                }
+                st.1 += take as u64;
+                filled += take;
+            }
+        } else if bps8 {
             for (i, b) in out.iter_mut().enumerate() {
                 *b = self.next_value(i % spp) as u8;
             }
@@ -166,32 +218,32 @@ impl Synthesizer<'_> {
 // Parallel sort fallback (32/64-bit integers, floats, sub-byte)
 // ============================================================================
 
-/// Sort a macro-generated sample type in place inside a raw byte buffer.
-macro_rules! sort_typed {
-    ($buf:expr, $t:ty) => {{
-        let size = std::mem::size_of::<$t>();
-        let mut values: Vec<$t> = $buf
-            .chunks_exact(size)
-            .map(|c| <$t>::from_ne_bytes(c.try_into().unwrap()))
-            .collect();
-        values.par_sort_unstable();
-        for (chunk, v) in $buf.chunks_exact_mut(size).zip(values) {
-            chunk.copy_from_slice(&v.to_ne_bytes());
-        }
-    }};
-}
-
-/// Sort a float sample type in place inside a raw byte buffer (total order).
-macro_rules! sort_typed_float {
-    ($buf:expr, $t:ty) => {{
-        let size = std::mem::size_of::<$t>();
-        let mut values: Vec<$t> = $buf
-            .chunks_exact(size)
-            .map(|c| <$t>::from_ne_bytes(c.try_into().unwrap()))
-            .collect();
-        values.par_sort_unstable_by(|a, b| a.total_cmp(b));
-        for (chunk, v) in $buf.chunks_exact_mut(size).zip(values) {
-            chunk.copy_from_slice(&v.to_ne_bytes());
+/// Sort the samples of type `$t` held in the raw byte buffer `$buf`, using
+/// `$sort` to order a `&mut [$t]` slice.
+///
+/// Every bit pattern is a valid value of the integer/float types used here, so
+/// reinterpreting the bytes as `[$t]` is sound. `align_to_mut` yields the
+/// largest aligned middle slice; for the common case of an aligned, whole-element
+/// buffer the prefix/suffix are empty and the sort runs fully in place — no clone
+/// and no extra allocation. Only a misaligned buffer falls back to a typed copy.
+macro_rules! sort_in_place {
+    ($buf:expr, $t:ty, $sort:expr) => {{
+        let sort = $sort;
+        // SAFETY: any bit pattern is a valid `$t` (integers, and floats accept
+        // all bit patterns including NaN), so the transmute is sound.
+        let (head, mid, tail) = unsafe { $buf.align_to_mut::<$t>() };
+        if head.is_empty() && tail.is_empty() {
+            sort(mid);
+        } else {
+            let size = std::mem::size_of::<$t>();
+            let mut values: Vec<$t> = $buf
+                .chunks_exact(size)
+                .map(|c| <$t>::from_ne_bytes(c.try_into().unwrap()))
+                .collect();
+            sort(&mut values[..]);
+            for (chunk, v) in $buf.chunks_exact_mut(size).zip(values) {
+                chunk.copy_from_slice(&v.to_ne_bytes());
+            }
         }
     }};
 }
@@ -204,16 +256,25 @@ macro_rules! sort_typed_float {
 /// values for byte-aligned rows.
 pub fn sort_samples(buf: &mut [u8], bps: u16, fmt: u16) {
     match (bps, fmt) {
-        (8, SAMPLEFORMAT_INT) => sort_typed!(buf, i8),
-        (16, SAMPLEFORMAT_INT) => sort_typed!(buf, i16),
-        (16, SAMPLEFORMAT_IEEEFP) => sort_typed!(buf, u16), // half: bit-pattern order is fine
-        (16, _) => sort_typed!(buf, u16),
-        (32, SAMPLEFORMAT_IEEEFP) => sort_typed_float!(buf, f32),
-        (32, SAMPLEFORMAT_INT) => sort_typed!(buf, i32),
-        (32, _) => sort_typed!(buf, u32),
-        (64, SAMPLEFORMAT_IEEEFP) => sort_typed_float!(buf, f64),
-        (64, SAMPLEFORMAT_INT) => sort_typed!(buf, i64),
-        (64, _) => sort_typed!(buf, u64),
+        (8, SAMPLEFORMAT_INT) => sort_in_place!(buf, i8, |s: &mut [i8]| s.par_sort_unstable()),
+        (16, SAMPLEFORMAT_INT) => sort_in_place!(buf, i16, |s: &mut [i16]| s.par_sort_unstable()),
+        // half: bit-pattern order is fine (any permutation preserves the histogram)
+        (16, SAMPLEFORMAT_IEEEFP) => {
+            sort_in_place!(buf, u16, |s: &mut [u16]| s.par_sort_unstable())
+        }
+        (16, _) => sort_in_place!(buf, u16, |s: &mut [u16]| s.par_sort_unstable()),
+        (32, SAMPLEFORMAT_IEEEFP) => {
+            sort_in_place!(buf, f32, |s: &mut [f32]| s
+                .par_sort_unstable_by(f32::total_cmp))
+        }
+        (32, SAMPLEFORMAT_INT) => sort_in_place!(buf, i32, |s: &mut [i32]| s.par_sort_unstable()),
+        (32, _) => sort_in_place!(buf, u32, |s: &mut [u32]| s.par_sort_unstable()),
+        (64, SAMPLEFORMAT_IEEEFP) => {
+            sort_in_place!(buf, f64, |s: &mut [f64]| s
+                .par_sort_unstable_by(f64::total_cmp))
+        }
+        (64, SAMPLEFORMAT_INT) => sort_in_place!(buf, i64, |s: &mut [i64]| s.par_sort_unstable()),
+        (64, _) => sort_in_place!(buf, u64, |s: &mut [u64]| s.par_sort_unstable()),
         // 8-bit and packed sub-byte depths: byte-level sort
         _ => buf.par_sort_unstable(),
     }
