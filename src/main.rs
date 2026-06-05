@@ -1882,6 +1882,21 @@ unsafe fn wipe_single_ifd(
                 hist
             };
 
+            // Pass 2 emits exactly w*h*interleaved_spp samples per plane. If
+            // pass 1 counted a different number (e.g. a short/truncated tile
+            // decode), the synthesizer would silently zero-fill the deficit and
+            // corrupt the histogram. Verify the counts match and fail loudly.
+            let expected_samples = (w as u64) * (h as u64) * (interleaved_spp as u64);
+            if hist.total() != expected_samples {
+                return Err(anyhow!(
+                    "Histogram sample count mismatch on plane {} (counted {}, expected {}); \
+                     refusing to write corrupted output",
+                    s,
+                    hist.total(),
+                    expected_samples
+                ));
+            }
+
             // Pass 2: synthesize the sorted rows directly from the histogram
             pb.set_message(format!("Writing plane {}/{}", s + 1, num_planes));
             let mut synth = hist.synthesizer();
