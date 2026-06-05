@@ -1814,6 +1814,21 @@ unsafe fn wipe_single_ifd(
         ));
     }
 
+    // Sub-byte (1/2/4-bit) data is wiped by sorting whole bytes. That only
+    // preserves the per-sample histogram when each byte holds whole samples of
+    // a single channel and rows carry no padding bits (i.e. the row is an exact
+    // number of bytes). Otherwise a byte-level sort mixes padding bits or
+    // channels into the counts, silently violating the preservation guarantee.
+    if bps < 8 && (interleaved_spp > 1 || ((w as usize) * (bps as usize)) % 8 != 0) {
+        return Err(anyhow!(
+            "Sub-byte images ({}-bit, {} interleaved channel(s), width {}) cannot be \
+             wiped while preserving the per-channel histogram",
+            bps,
+            interleaved_spp,
+            w
+        ));
+    }
+
     let bytes_per_sample = (bps as usize).div_ceil(8);
     let in_row_size = if bps >= 8 {
         (w as usize) * bytes_per_sample * interleaved_spp
