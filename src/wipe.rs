@@ -155,10 +155,54 @@ impl Synthesizer<'_> {
         0
     }
 
-    /// Fill an interleaved output row with the next sorted values
+    /// Fill an interleaved output row with the next sorted values.
+    ///
+    /// For single-channel data (grayscale or one plane of separate data) the
+    /// output is one contiguous sorted run, so values are emitted in
+    /// run-length blocks (one fill per histogram bucket) rather than one
+    /// `next_value` call per sample. Interleaved multi-channel rows still go
+    /// sample-by-sample because adjacent samples belong to different channels.
     pub fn synthesize_row(&mut self, out: &mut [u8]) {
-        let spp = self.hist.counts.len();
-        if self.hist.bps == 8 {
+        let hist = self.hist;
+        let spp = hist.counts.len();
+        let bps8 = hist.bps == 8;
+
+        if spp == 1 {
+            let buckets = hist.num_buckets();
+            let counts = &hist.counts[0];
+            let st = &mut self.state[0];
+            let n = if bps8 { out.len() } else { out.len() / 2 };
+            let mut filled = 0usize;
+            while filled < n {
+                // Advance to the next bucket that still has samples to emit.
+                while st.0 < buckets && st.1 >= counts[hist.bucket_at(st.0)] {
+                    st.0 += 1;
+                    st.1 = 0;
+                }
+                if st.0 >= buckets {
+                    // Exhausted: only reachable if fewer samples were counted
+                    // than emitted (guarded upstream). Zero the remainder.
+                    if bps8 {
+                        out[filled..].fill(0);
+                    } else {
+                        out[filled * 2..].fill(0);
+                    }
+                    break;
+                }
+                let bucket = hist.bucket_at(st.0);
+                let take = (counts[bucket] - st.1).min((n - filled) as u64) as usize;
+                if bps8 {
+                    out[filled..filled + take].fill(bucket as u8);
+                } else {
+                    let bytes = (bucket as u16).to_ne_bytes();
+                    for s in out[filled * 2..(filled + take) * 2].chunks_exact_mut(2) {
+                        s.copy_from_slice(&bytes);
+                    }
+                }
+                st.1 += take as u64;
+                filled += take;
+            }
+        } else if bps8 {
             for (i, b) in out.iter_mut().enumerate() {
                 *b = self.next_value(i % spp) as u8;
             }
