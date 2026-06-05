@@ -1790,7 +1790,7 @@ unsafe fn wipe_single_ifd(
     // packed tightly by libtiff, but the read/sort path below assumes a
     // whole-byte sample stride, so the data would be silently mis-unpacked and
     // the histogram corrupted. Reject rather than produce wrong output.
-    if bps > 8 && bps % 8 != 0 {
+    if bps > 8 && !bps.is_multiple_of(8) {
         return Err(anyhow!(
             "{}-bit samples (not a multiple of 8) are not supported for wipe",
             bps
@@ -1802,7 +1802,7 @@ unsafe fn wipe_single_ifd(
     // a single channel and rows carry no padding bits (i.e. the row is an exact
     // number of bytes). Otherwise a byte-level sort mixes padding bits or
     // channels into the counts, silently violating the preservation guarantee.
-    if bps < 8 && (interleaved_spp > 1 || ((w as usize) * (bps as usize)) % 8 != 0) {
+    if bps < 8 && (interleaved_spp > 1 || !((w as usize) * (bps as usize)).is_multiple_of(8)) {
         return Err(anyhow!(
             "Sub-byte images ({}-bit, {} interleaved channel(s), width {}) cannot be \
              wiped while preserving the per-channel histogram",
