@@ -23,6 +23,28 @@ still open — see Future Enhancements.)
 **Tooling:** `scripts/prek-env.sh` routes prek's cargo hooks through a consistent
 rustup toolchain + private target dir (works around the distro `E0514`).
 
+### Known Bugs (found in the v0.4.0 verification review)
+
+Surfaced by analyzing `tests/README.md` verification failures and confirmed with
+GDAL band checksums. Full detail: `tests/FAILED_TESTS_ANALYSIS.md`.
+
+- 🔴 **1-bit (sub-byte) tiled images are corrupted by `compress`** — data loss.
+  `tiled-gray-i1.tif` round-trips to a different image (GDAL checksum 934 → 74).
+  The compress tiled reader (`process_tiled_image`) assumes a whole-byte sample
+  stride and mis-unpacks sub-byte tiled data. The wipe path already rejects
+  sub-byte tiled input; the compress path must do the same or bit-unpack correctly.
+- 🟠 **Overviews / reduced-resolution sub-IFDs are dropped** — `usda_naip_256_webp_z3.tif`
+  (base bands preserved, pyramid overviews lost); likely also `subsubifds.tif`
+  (SubIFD chains). Preserve them, or document the limitation.
+- 🟠 **LogLuv output uses a non-standard compression** — `off_luv24/32.tif`: pixels
+  are preserved but the output keeps `PHOTOMETRIC_LOGLUV` with zstd, which strict
+  readers reject (SGILOG requires compression 34676/34677). Preserve SGILOG (or
+  skip recompression) for LogLuv/SGILOG photometrics.
+
+> Note: the visual report's verifier (ImageMagick `compare -metric AE`) produces
+> many **false** failures (64-bit, multi-page/OME, alpha, oversized images) where
+> the pixels are in fact identical. See the testing improvement below.
+
 ### Security Remediation (In Progress)
 
 **Security Audit Completed:** March 2026 (18 issues identified)
@@ -162,6 +184,10 @@ rustup toolchain + private target dir (works around the distro `E0514`).
 - [ ] **Performance regression tests** - track compression speed over time
 - [ ] **ExtraSamples/Alpha channel verification** - Verify alpha channel is preserved correctly
 - [ ] **Multi-page/OME-TIFF metadata verification** - Page count matches, OME-XML block preserved, ImageDescription tag preserved
+- [ ] **Stronger `test-report` verification** - replace ImageMagick `compare -metric AE`
+  with GDAL band checksums (and per-frame diff for multi-page), so 64-bit,
+  multi-page/OME, alpha and oversized images stop reporting as false failures
+  (see `tests/FAILED_TESTS_ANALYSIS.md`)
 
 ---
 
