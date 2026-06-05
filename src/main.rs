@@ -511,20 +511,7 @@ fn process_single_file(
     let is_float = sample_format == SAMPLEFORMAT_IEEEFP;
 
     // Get IFD count
-    let mut total_pages = 0u16;
-    unsafe {
-        let c_path = CString::new(input.to_str().ok_or_else(|| anyhow!("Invalid path"))?)?;
-        let tif = TIFFOpen(c_path.as_ptr(), CString::new("r")?.as_ptr());
-        if !tif.is_null() {
-            loop {
-                total_pages += 1;
-                if TIFFReadDirectory(tif) == 0 {
-                    break;
-                }
-            }
-            TIFFClose(tif);
-        }
-    };
+    let total_pages = count_tiff_pages(input).unwrap_or(0);
 
     if verbose {
         log::info!(
@@ -790,6 +777,22 @@ fn get_tiff_info(path: &Path) -> Result<(u32, u32, u16, u16, u16)> {
 
         TIFFClose(tif);
         Ok((w, h, bps, spp, fmt))
+    }
+}
+
+/// Count the number of IFDs (pages) in a TIFF. Returns at least 1 for a valid
+/// file. Uses libtiff's `TIFFNumberOfDirectories`, which walks the directory
+/// chain once internally and restores the current directory.
+fn count_tiff_pages(path: &Path) -> Result<u16> {
+    let c_path = CString::new(path.to_str().ok_or_else(|| anyhow!("Invalid path"))?)?;
+    unsafe {
+        let tif = TIFFOpen(c_path.as_ptr(), CString::new("r")?.as_ptr());
+        if tif.is_null() {
+            return Err(anyhow!("Failed to open TIFF file: {:?}", path));
+        }
+        let pages = TIFFNumberOfDirectories(tif);
+        TIFFClose(tif);
+        Ok(pages)
     }
 }
 
@@ -1607,21 +1610,7 @@ fn wipe_single_file(
     let original_size = fs::metadata(input)?.len();
 
     // Get IFD count
-    let mut total_pages = 0u16;
-    unsafe {
-        let c_path = CString::new(input.to_str().ok_or_else(|| anyhow!("Invalid path"))?)?;
-        let tif = TIFFOpen(c_path.as_ptr(), CString::new("r")?.as_ptr());
-        if tif.is_null() {
-            return Err(anyhow!("Failed to open TIFF file: {:?}", input));
-        }
-        loop {
-            total_pages += 1;
-            if TIFFReadDirectory(tif) == 0 {
-                break;
-            }
-        }
-        TIFFClose(tif);
-    };
+    let total_pages = count_tiff_pages(input)?;
 
     let c_input = CString::new(
         input
