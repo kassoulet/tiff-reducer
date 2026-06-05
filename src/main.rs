@@ -381,6 +381,20 @@ fn compress_command(
 ) -> Result<()> {
     let files = expand_tiff_inputs(&input)?;
 
+    // With more than one input, --output must be a directory; otherwise every
+    // file would resolve to the same target (and temp) path and the parallel
+    // workers would race to write/rename it, corrupting the result.
+    if files.len() > 1 {
+        if let Some(ref out) = output {
+            if !out.is_dir() {
+                return Err(anyhow!(
+                    "Multiple input files require --output to be an existing directory, not a file: {:?}",
+                    out
+                ));
+            }
+        }
+    }
+
     let m = MultiProgress::new();
 
     // Use rayon for file-level parallelism with configurable job count
@@ -1499,6 +1513,20 @@ fn wipe_command(
     verbose: bool,
 ) -> Result<()> {
     let files = expand_tiff_inputs(&input)?;
+
+    // With more than one input, --output must be a directory; otherwise every
+    // file would resolve to the same target (and temp) path and the parallel
+    // workers would race to write/rename it, corrupting the result.
+    if files.len() > 1 {
+        if let Some(ref out) = output {
+            if !out.is_dir() {
+                return Err(anyhow!(
+                    "Multiple input files require --output to be an existing directory, not a file: {:?}",
+                    out
+                ));
+            }
+        }
+    }
 
     let m = MultiProgress::new();
     let num_jobs = jobs.unwrap_or_else(num_cpus::get);
