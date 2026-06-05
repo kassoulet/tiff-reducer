@@ -1803,6 +1803,17 @@ unsafe fn wipe_single_ifd(
         1
     };
 
+    // Sample widths >= 8 that are not a whole number of bytes (e.g. 12-bit) are
+    // packed tightly by libtiff, but the read/sort path below assumes a
+    // whole-byte sample stride, so the data would be silently mis-unpacked and
+    // the histogram corrupted. Reject rather than produce wrong output.
+    if bps > 8 && bps % 8 != 0 {
+        return Err(anyhow!(
+            "{}-bit samples (not a multiple of 8) are not supported for wipe",
+            bps
+        ));
+    }
+
     let bytes_per_sample = (bps as usize).div_ceil(8);
     let in_row_size = if bps >= 8 {
         (w as usize) * bytes_per_sample * interleaved_spp
