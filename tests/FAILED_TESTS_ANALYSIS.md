@@ -1,187 +1,126 @@
 # Skipped Tests Analysis Report
 
-**Generated:** 2026-03-22
-**Test Suite:** tiff-reducer Integration Tests (v0.3.0)
-**Overall Success Rate:** 292/304 (96.1%)
+**Generated:** 2026-06-05
+**Test Suite:** tiff-reducer Integration Tests (v0.4.0)
+**Skip list source:** `tests/integration_tests.rs` (`skip_files`)
 
 ---
 
 ## Executive Summary
 
-Out of 304 test images, **12 images are skipped** (3.9% skip rate). These are not bugs in tiff-reducer but rather limitations in libtiff or corrupt test files.
+The integration suite excludes **8** test images via the `skip_files` allowlist.
+They are skipped because of source-file corruption or libtiff format limitations
+(legacy/obsolete codecs and YCbCr / downsampled-JPEG handling) — **not** bugs in
+tiff-reducer.
 
-The failures fall into three categories:
+Notable change since the v0.3.0 analysis: with the YCbCr-subsampling guards added
+in v0.4.0, **none of these images crash any more**. Running `compress` on each now
+returns exit 0 (graceful) — verified 2026-06-05 against the release binary. They
+remain on the skip list because their round-trip / pixel-fidelity verification
+can't be satisfied for these formats, not because they abort.
 
-1. **Legacy/Obsolete Formats** (2 images) - Formats no longer well-supported by libtiff
-2. **YCbCr Color Space Crashes** (4 images) - libtiff crashes during TIFFWriteDirectory
-3. **Other Compression Issues** (6 images) - Various codec-specific issues
+The 8 fall into three categories:
 
----
-
-## Category 1: Legacy/Obsolete Formats (2 images)
-
-These files use obsolete compression formats that have limited or no support in modern libtiff.
-
-### smallliz.tif
-- **Format:** OJPEG (Old JPEG) + YCbCr
-- **Error:** Graceful error: `YCbCr subsampling (2,2) is not supported` (detected)
-- **Root Cause:** OJPEG is a legacy format; file also has unsupported YCbCr subsampling
-- **Status:** ✅ Fixed (error handling)
-- **Recommendation:** None - intentionally skipped
-
-### text.tif
-- **Format:** THUNDERSCAN
-- **Error:** `ThunderDecode: Not enough data at scanline 356 (0 != 1512).`
-- **Root Cause:** THUNDERSCAN is an obsolete format; file has corrupt data
-- **Status:** ⚠️ Known limitation - file is corrupt
-- **Recommendation:** Skip this file
+| # | Category | Images |
+|---|----------|--------|
+| 1 | Corrupt / obsolete source data | `text.tif` |
+| 2 | Legacy OJPEG (+ YCbCr) | `smallliz.tif`, `zackthecat.tif` |
+| 3 | YCbCr / downsampled-JPEG handling | `ycbcr-cat.tif`, `quad-tile.jpg.tiff`, `quad-jpeg.tif`, `tiled-jpeg-ycbcr.tif`, `dscf0013.tif` |
 
 ---
 
-## Category 2: YCbCr Color Space Crashes (4 images)
+## Per-image detail
 
-These files use YCbCr color space with subsampling, which causes crashes in libtiff's TIFFWriteDirectory function.
+"Current behavior" rows are from `tiff-reducer compress <img> --output /tmp/...`
+on 2026-06-05; exit status and any libtiff message are noted.
 
-### ycbcr-cat.tif
-- **Format:** YCbCr with 2:2 subsampling, LZW compression
-- **Error:** Graceful error: `YCbCr subsampling (2,2) is not supported`
-- **Root Cause:** libtiff crash when writing YCbCr with subsampling
-- **Status:** ✅ Fixed (error handling)
-- **Recommendation:** None - intentionally skipped
+### Category 1 — Corrupt / obsolete source data
 
-### zackthecat.tif
-- **Format:** OJPEG + YCbCr
-- **Error:** Graceful error: `YCbCr subsampling (2,2) is not supported` (detected)
-- **Root Cause:** Combination of legacy OJPEG and YCbCr color space
-- **Status:** ✅ Fixed (error handling)
-- **Recommendation:** None - intentionally skipped
+#### `text.tif`
+- **Format:** THUNDERSCAN (compression 32809), 1c / 4-bit, striped, 1512×359
+- **Current behavior:** exit 0, but libtiff emits
+  `ThunderDecode: Not enough data at scanline 356 (0 != 1512).`
+- **Root cause:** THUNDERSCAN is an obsolete codec and this file's data is
+  truncated/corrupt — libtiff cannot fully decode it, so the decoded pixels are
+  incomplete and fidelity verification cannot pass.
+- **Recommendation:** keep skipped (corrupt input, not fixable here).
 
-### quad-tile.jpg.tiff
-- **Format:** Tiled JPEG + YCbCr
-- **Error:** Graceful error: `YCbCr subsampling (2,2) is not supported` (detected)
-- **Root Cause:** Complex combination of tiled format, JPEG compression, and YCbCr
-- **Status:** ✅ Fixed (error handling)
-- **Recommendation:** None - intentionally skipped
+### Category 2 — Legacy OJPEG
 
-### tiled-jpeg-ycbcr.tif
-- **Format:** JPEG + YCbCr
-- **Error:** Graceful error: `YCbCr subsampling (2,2) is not supported` (detected)
-- **Root Cause:** JPEG/YCbCr combination causes crash
-- **Status:** ✅ Fixed (error handling)
-- **Recommendation:** None - intentionally skipped
+#### `smallliz.tif`
+- **Format:** OJPEG (Old JPEG, compression 6) + YCbCr, 3c / 8-bit, striped, 160×160
+- **Current behavior:** exit 0 (graceful).
+- **Root cause:** OJPEG is a deprecated, poorly-specified codec; combined with
+  YCbCr subsampling it cannot be round-tripped reliably.
+- **Recommendation:** keep skipped (legacy format).
 
----
+#### `zackthecat.tif`
+- **Format:** OJPEG (compression 6) + YCbCr, 3c / 8-bit, tiled (240×224), 234×213
+- **Current behavior:** exit 0 (graceful; previously crashed).
+- **Root cause:** same OJPEG + YCbCr limitation as `smallliz.tif`, tiled variant.
+- **Recommendation:** keep skipped (legacy format).
 
-## Category 3: Other Compression Issues (6 images)
+### Category 3 — YCbCr / downsampled JPEG
 
-### quad-jpeg.tif
-- **Format:** JPEG compression
-- **Error:** Command failed (segfault)
-- **Root Cause:** JPEG scanline reading issue (libtiff limitation)
-- **Status:** ⚠️ Known limitation - requires `TIFFReadEncodedStrip` implementation
-- **Recommendation:** Skip this file until strip-based reading is implemented
+These use `PHOTOMETRIC_YCBCR` (often via JPEG) where chroma subsampling and/or
+scanline-vs-strip access prevent a faithful decode→re-encode round trip.
 
-### sample-get-lzw-stuck.tiff
-- **Format:** LZW compression
-- **Error:** Command failed (no output)
-- **Root Cause:** LZW compression handling issue
-- **Status:** ✅ Fixed (verified in integration tests)
+#### `ycbcr-cat.tif`
+- **Format:** LZW + YCbCr, 3c / 8-bit, striped, 250×325
+- **Current behavior:** exit 0 (graceful; previously crashed in `TIFFWriteDirectory`).
+- **Root cause:** YCbCr subsampling; faithful pixel round-trip not guaranteed.
 
----
+#### `quad-tile.jpg.tiff`
+- **Format:** JPEG + YCbCr, tiled (128×128), 3c / 8-bit, 512×384
+- **Current behavior:** exit 0 (graceful).
+- **Root cause:** tiled JPEG/YCbCr with subsampled chroma planes.
 
-## Test Results Summary
+#### `quad-jpeg.tif`
+- **Format:** JPEG, 3c / 8-bit, striped, 512×384
+- **Current behavior:** exit 0, with libtiff message
+  `TIFFReadScanline: scanline oriented access is not supported for downsampled
+  JPEG compressed images, consider enabling TIFFTAG_JPEGCOLORMODE as
+  JPEGCOLORMODE_RGB.`
+- **Root cause:** downsampled JPEG requires `JPEGCOLORMODE_RGB` for scanline
+  access, which the current read path does not set, so scanlines can't be read.
 
-### By Test Type
+#### `tiled-jpeg-ycbcr.tif`
+- **Format:** JPEG/YCbCr, 3c / 8-bit, 374×499
+- **Current behavior:** exit 0 (graceful).
+- **Root cause:** JPEG/YCbCr handling as above.
 
-| Test Category | Passed | Skipped | Success Rate |
-|--------------|--------|---------|--------------|
-| Image Compression | 292 | 12 | 96.1% |
-| Metadata Preservation | 292 | 12 | 96.1% |
-| Pixel Content (Lossless) | 292 | 12 | 96.1% |
-| GeoTIFF Metadata | 1 | 0 | 100% |
-| Error Handling | 2 | 0 | 100% |
-
-### By Skip Reason
-
-| Skip Reason | Count | Percentage |
-|-------------|-------|------------|
-| YCbCr subsampling crash | 4 | 33.3% |
-| Legacy format (OJPEG) | 1 | 8.3% |
-| Obsolete format (THUNDERSCAN) | 1 | 8.3% |
-| JPEG compression issues | 2 | 16.7% |
-| LZW compression issues | 1 | 8.3% |
-| Other compression issues | 3 | 25.0% |
-
----
-
-## Known Limitations
-
-### LibTIFF Issues (Not tiff-reducer bugs)
-
-1. **TIFFWriteDirectorySec crashes** with YCbCr subsampling
-   - Affects: YCbCr images with 2:2 subsampling
-   - Status: Upstream libtiff bug
-
-2. **OJPEG support incomplete**
-   - Affects: Legacy OJPEG-compressed files
-   - Status: Known libtiff limitation
-
-3. **THUNDERSCAN obsolete**
-   - Affects: THUNDERSCAN-compressed files
-   - Status: Format is obsolete, files often corrupt
-
-### tiff-reducer Limitations
-
-1. **YCbCr color space conversion**
-   - Currently preserves YCbCr but crashes on write with subsampling
-   - Future work: Implement proper YCbCr handling or RGB conversion option
-
-2. **JPEG compression edge cases**
-   - Some JPEG-compressed TIFF files cause issues
-   - Future work: Investigate and fix JPEG handling
+#### `dscf0013.tif`
+- **Format:** Uncompressed + YCbCr subsampling (2,1), 3c / 8-bit, striped, 640×480
+- **Current behavior:** exit 0 — explicitly rejected by the YCbCr-subsampling
+  guard (subsampling ≠ (1,1)) added in v0.4.0.
+- **Root cause:** non-(1,1) YCbCr subsampling is intentionally rejected to avoid
+  producing an incorrect image.
 
 ---
 
 ## Recommendations
 
-### Immediate Actions
-
-1. **Skip known problematic files** - Already implemented in test suite
-2. **Document limitations** - Add to README.md and ROADMAP.md
-3. **Monitor libtiff updates** - Track upstream fixes for YCbCr issues
-
-### Future Enhancements
-
-1. **YCbCr to RGB conversion option** - Allow users to convert YCbCr to RGB
-2. **Better error messages** - Distinguish between corrupt files and bugs
-3. **JPEG handling improvements** - Investigate and fix JPEG edge cases
-4. **Fuzz testing** - Add more malformed file tests
+1. **Keep all 8 skipped** — each is a corrupt source or an unsupported
+   legacy/YCbCr/downsampled-JPEG format, not a regression.
+2. **Re-evaluate the skip list periodically:** since none of these abort any more,
+   the list could be narrowed if/when the suite distinguishes "must not crash"
+   (now satisfied by all 8) from "must round-trip faithfully" (still unmet).
+3. **Possible future work** (tracked in `ROADMAP.md`): enable `JPEGCOLORMODE_RGB`
+   on the JPEG read path so downsampled-JPEG inputs like `quad-jpeg.tif` can be
+   read via scanlines and re-encoded.
 
 ---
 
-## Test Environment
+## Reproduction
 
-- **LibTIFF Version:** 4.7.1 (vendored, statically linked)
-- **LibGeoTIFF:** Integrated via XTIFFInitialize()
-- **Test Framework:** Rust integration tests
-- **Validation Tool:** GDAL for metadata verification
-
----
-
-## Conclusion
-
-The 3.9% skip rate is due to **known limitations in libtiff** and **corrupt test files**, not bugs in tiff-reducer itself. The core functionality is working correctly:
-
-- ✅ GeoTIFF compression and metadata preservation: **100% success**
-- ✅ Standard TIFF compression: **96.1% success**
-- ✅ Metadata preservation: **96.1% success**
-
-The remaining skips are due to:
-1. YCbCr subsampling crashes (libtiff bug)
-2. Legacy/obsolete formats (OJPEG, THUNDERSCAN)
-3. JPEG/LZW edge cases (under investigation)
+```bash
+cargo build --release
+for f in smallliz text ycbcr-cat zackthecat quad-tile.jpg quad-jpeg tiled-jpeg-ycbcr dscf0013; do
+  ./target/release/tiff-reducer compress tests/images/"$f".*tif* --output "/tmp/$f.tif"
+  echo "$f -> exit $?"
+done
+```
 
 ---
 
-*Report generated by tiff-reducer test suite*
-*Last updated: 2026-03-22*
+*Last updated: 2026-06-05 (v0.4.0)*

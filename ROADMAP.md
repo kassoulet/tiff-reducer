@@ -86,6 +86,24 @@ This document lists future features and known limitations to address in future r
 - [ ] **Filter by status** (show only failures)
 - [ ] **Sort options** (by name, size, ratio, status)
 
+### Wipe command (follow-ups from the v0.4.0 correctness review)
+- [ ] **Sub-byte / non-byte-aligned wipe support** — `wipe` currently rejects
+  1/2/4-bit images that aren't single-channel + byte-aligned, and rejects
+  non-byte-aligned widths ≥ 8 (e.g. 12-bit), because the byte-level sort can't
+  preserve the per-sample histogram for those. Add bit-unpacked handling so they
+  can be wiped while keeping the histogram guarantee.
+- [ ] **Deeper compress/wipe dedup** — the v0.4.0 refactor shared page-counting,
+  the file-loop scaffolding, and tile geometry (`TileGeometry`). The two *tiled
+  decode loops* (compress's thread-local-handle model vs wipe's fresh-worker
+  model) and the IFD-setup preambles are still duplicated; unify them behind one
+  abstraction.
+
+### Reliability / tooling
+- [ ] **Enable `JPEGCOLORMODE_RGB` on the JPEG read path** so downsampled-JPEG
+  inputs (e.g. `quad-jpeg.tif`) can be read via scanlines instead of failing
+  (`scanline oriented access is not supported for downsampled JPEG`). See
+  `tests/FAILED_TESTS_ANALYSIS.md`.
+
 ---
 
 ## Format-Specific Issues / Todo
