@@ -1327,7 +1327,8 @@ unsafe fn process_tiled_image(
     // so tiles stay byte-aligned in the destination row. A non-aligned sub-byte
     // tile width would require bit-shifting to merge tiles, which we don't
     // implement; reject it rather than silently corrupt the image.
-    if !bits_per_pixel.is_multiple_of(8) && !(tile_width as usize * bits_per_pixel).is_multiple_of(8)
+    if !bits_per_pixel.is_multiple_of(8)
+        && !(tile_width as usize * bits_per_pixel).is_multiple_of(8)
     {
         return Err(anyhow!(
             "Sub-byte tiled images with non-byte-aligned tile rows are not supported \
