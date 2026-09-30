@@ -193,12 +193,25 @@ pub unsafe fn copy_image_description(src: *mut TIFF, dst: *mut TIFF) -> Result<(
     Ok(())
 }
 
-/// These tags require manual registration with libtiff
-/// For now, skip copying as the registration is causing issues
-/// TODO: Fix GDAL tag registration with proper libtiff field info structure
-pub unsafe fn copy_gdal_tags(_src: *mut TIFF, _dst: *mut TIFF) -> Result<()> {
-    // GDAL tags are not supported yet - requires proper libtiff field info structure
-    // The NoDataValue will be lost, but pixel data is preserved
+/// Copy GDAL metadata tags including NoData value
+pub unsafe fn copy_gdal_tags(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
+    // Copy GDAL NoData value
+    let mut nodata: f64 = 0.0;
+    if TIFFGetField(src, TIFFTAG_GDAL_NODATA, &mut nodata) != 0 {
+        if TIFFSetField(dst, TIFFTAG_GDAL_NODATA, nodata) == 0 {
+            return Err(anyhow!("Failed to set GDAL NoData value"));
+        }
+    }
+
+    // Copy GDAL metadata (XML string)
+    let mut meta: *mut c_char = std::ptr::null_mut();
+    if TIFFGetField(src, TIFFTAG_GDAL_METADATA, &mut meta) != 0 {
+        if !meta.is_null() {
+            if TIFFSetField(dst, TIFFTAG_GDAL_METADATA, meta) == 0 {
+                return Err(anyhow!("Failed to set GDAL metadata"));
+            }
+        }
+    }
     Ok(())
 }
 

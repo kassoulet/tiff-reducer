@@ -37,6 +37,8 @@ extern "C" {
     #[allow(dead_code)]
     pub fn TIFFSetDirectory(tif: *mut TIFF, dir: u16) -> c_int;
     pub fn TIFFWriteDirectory(tif: *mut TIFF) -> c_int;
+    pub fn TIFFCreateDirectory(tif: *mut TIFF) -> c_int;
+    pub fn TIFFFlush(tif: *mut TIFF) -> c_int;
 
     #[allow(dead_code)]
     pub fn TIFFIsBigTIFF(tif: *mut TIFF) -> c_int;
@@ -194,6 +196,10 @@ pub const PHOTOMETRIC_PALETTE: u16 = 3;
 pub const PHOTOMETRIC_SEPARATED: u16 = 5; // CMYK
 pub const PHOTOMETRIC_YCBCR: u16 = 6;
 
+// SubFileType values
+pub const FILETYPE_REDUCEDIMAGE: u32 = 0x1;
+pub const TIFFTAG_SUBFILETYPE: u32 = 254;
+
 // YCbCr tags
 pub const TIFFTAG_YCBCRSUBSAMPLING: u32 = 530;
 pub const TIFFTAG_YCBCRPOSITION: u32 = 531;
@@ -334,10 +340,13 @@ pub unsafe fn get_tile_offsets_and_counts(tif: *mut TIFF) -> (*mut u64, *mut u64
 }
 
 /// Get GDAL nodata value
-/// Note: TIFFGetField for GDAL_NODATA (42113) crashes in some libtiff versions,
-/// so we return a default value instead.
-pub unsafe fn get_gdal_nodata(_tif: *mut TIFF) -> Option<f64> {
-    Some(0.0)
+pub unsafe fn get_gdal_nodata(tif: *mut TIFF) -> Option<f64> {
+    let mut nodata: f64 = 0.0;
+    if TIFFGetField(tif, TIFFTAG_GDAL_NODATA, &mut nodata) != 0 {
+        Some(nodata)
+    } else {
+        None
+    }
 }
 
 /// Check if a strip is sparse (offset=0 && byte_count=0)
