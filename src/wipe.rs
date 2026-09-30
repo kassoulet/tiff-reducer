@@ -72,12 +72,12 @@ impl Histogram {
             }
         } else if spp == 1 {
             let c = &mut self.counts[0];
-            for s in buf.chunks_exact(2) {
+            for s in buf.as_chunks::<2>().0 {
                 c[u16::from_ne_bytes([s[0], s[1]]) as usize] += 1;
             }
         } else {
-            for px in buf.chunks_exact(2 * spp) {
-                for (c, s) in px.chunks_exact(2).enumerate() {
+            for px in buf.as_chunks::<2>().0.chunks(spp) {
+                for (c, s) in px.iter().enumerate() {
                     self.counts[c][u16::from_ne_bytes([s[0], s[1]]) as usize] += 1;
                 }
             }
@@ -195,7 +195,7 @@ impl Synthesizer<'_> {
                     out[filled..filled + take].fill(bucket as u8);
                 } else {
                     let bytes = (bucket as u16).to_ne_bytes();
-                    for s in out[filled * 2..(filled + take) * 2].chunks_exact_mut(2) {
+                    for s in out[filled * 2..(filled + take) * 2].as_chunks_mut::<2>().0 {
                         s.copy_from_slice(&bytes);
                     }
                 }
@@ -207,7 +207,7 @@ impl Synthesizer<'_> {
                 *b = self.next_value(i % spp) as u8;
             }
         } else {
-            for (i, s) in out.chunks_exact_mut(2).enumerate() {
+            for (i, s) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
                 s.copy_from_slice(&self.next_value(i % spp).to_ne_bytes());
             }
         }
