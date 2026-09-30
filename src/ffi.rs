@@ -212,46 +212,80 @@ pub const TIFFTAG_GDAL_NODATA: u32 = 42113;
 /// Read strip/tile offsets and byte counts for sparse TIFF detection
 /// Returns (offsets, byte_counts, count) - arrays must be freed by caller
 pub unsafe fn get_strip_offsets_and_counts(tif: *mut TIFF) -> (*mut u64, *mut u64, u32) {
-    // Use TIFFNumberOfStrips and TIFFReadEncodedStrip to detect sparse strips
-    // For sparse strips, TIFFReadEncodedStrip returns 0 bytes read
+    // Get number of strips
     let nstrips = TIFFNumberOfStrips(tif);
     if nstrips == 0 {
         return (std::ptr::null_mut(), std::ptr::null_mut(), 0);
     }
 
-    // Allocate arrays for offsets and byte counts
+    // Try to get StripByteCounts to detect sparse strips (byte_count == 0 means sparse)
+    // First try to get as LONG8 (BigTIFF)
+    let mut byte_counts_ptr: *mut u64 = std::ptr::null_mut();
+    let mut count: u32 = 0;
+
+    if TIFFGetField(
+        tif,
+        TIFFTAG_STRIPBYTECOUNTS,
+        &mut count,
+        &mut byte_counts_ptr,
+    ) != 0
+        && count == nstrips
+        && !byte_counts_ptr.is_null()
+    {
+        // Successfully got byte counts as LONG8
+        let offsets = libc::malloc(nstrips as usize * 8) as *mut u64;
+        let byte_counts = libc::malloc(nstrips as usize * 8) as *mut u64;
+
+        if !offsets.is_null() && !byte_counts.is_null() {
+            // Copy byte counts
+            for i in 0..nstrips as usize {
+                *byte_counts.add(i) = *byte_counts_ptr.add(i);
+                // For offsets, we don't have them, but we can infer sparsity from byte_counts
+                // If byte_count == 0, it's sparse
+                *offsets.add(i) = if *byte_counts.add(i) == 0 { 0 } else { 1 };
+            }
+            return (offsets, byte_counts, nstrips);
+        }
+    }
+
+    // Try LONG (classic TIFF - 32-bit)
+    let mut byte_counts32_ptr: *mut u32 = std::ptr::null_mut();
+    if TIFFGetField(
+        tif,
+        TIFFTAG_STRIPBYTECOUNTS,
+        &mut count,
+        &mut byte_counts32_ptr,
+    ) != 0
+        && count == nstrips
+        && !byte_counts32_ptr.is_null()
+    {
+        // Successfully got byte counts as LONG
+        let offsets = libc::malloc(nstrips as usize * 8) as *mut u64;
+        let byte_counts = libc::malloc(nstrips as usize * 8) as *mut u64;
+
+        if !offsets.is_null() && !byte_counts.is_null() {
+            for i in 0..nstrips as usize {
+                let bc = *byte_counts32_ptr.add(i) as u64;
+                *byte_counts.add(i) = bc;
+                *offsets.add(i) = if bc == 0 { 0 } else { 1 };
+            }
+            return (offsets, byte_counts, nstrips);
+        }
+    }
+
+    // Fallback: allocate dummy arrays - all non-sparse
     let offsets = libc::malloc(nstrips as usize * 8) as *mut u64;
     let byte_counts = libc::malloc(nstrips as usize * 8) as *mut u64;
 
-    if offsets.is_null() || byte_counts.is_null() {
-        if !offsets.is_null() {
-            libc::free(offsets as *mut _);
+    if !offsets.is_null() && !byte_counts.is_null() {
+        for i in 0..nstrips as usize {
+            *offsets.add(i) = 1;
+            *byte_counts.add(i) = 1;
         }
-        if !byte_counts.is_null() {
-            libc::free(byte_counts as *mut _);
-        }
-        return (std::ptr::null_mut(), std::ptr::null_mut(), 0);
+        return (offsets, byte_counts, nstrips);
     }
 
-    // For each strip, check if it's sparse by trying to read it
-    // We use a small buffer to test - if sparse, read returns 0
-    let mut test_buf = [0u8; 1];
-    for strip in 0..nstrips {
-        // Try to read the strip - for sparse strips this returns 0
-        let bytes_read = TIFFReadEncodedStrip(tif, strip, test_buf.as_mut_ptr() as *mut c_void, 1);
-        if bytes_read <= 0 {
-            // Sparse strip - offset=0, byte_count=0
-            *offsets.add(strip as usize) = 0;
-            *byte_counts.add(strip as usize) = 0;
-        } else {
-            // Non-sparse strip - we don't know the actual offset/count from this call
-            // Mark as non-sparse with dummy values
-            *offsets.add(strip as usize) = 1; // non-zero = not sparse
-            *byte_counts.add(strip as usize) = 1;
-        }
-    }
-
-    (offsets, byte_counts, nstrips)
+    (std::ptr::null_mut(), std::ptr::null_mut(), 0)
 }
 
 /// Get tile offsets and byte counts for sparse TIFF detection
