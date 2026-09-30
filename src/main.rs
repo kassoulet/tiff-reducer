@@ -1178,6 +1178,54 @@ unsafe fn process_single_ifd(
     Ok(())
 }
 
+/// Create a scanline filled with nodata value for the given format
+fn create_nodata_scanline(
+    nodata: f64,
+    bps: u16,
+    fmt: u16,
+    w: u32,
+    spp: u16,
+    planar: u16,
+    buf_template: &[u8],
+) -> Vec<u8> {
+    let mut nodata_buf = vec![0u8; buf_template.len()];
+    let spp_eff = if planar == PLANARCONFIG_SEPARATE {
+        1
+    } else {
+        spp as u32
+    };
+    let pixel_count = (w * spp_eff) as usize;
+
+    if bps == 32 && fmt == SAMPLEFORMAT_IEEEFP {
+        let slice = unsafe {
+            std::slice::from_raw_parts_mut(nodata_buf.as_mut_ptr() as *mut f32, pixel_count)
+        };
+        slice.fill(nodata as f32);
+    } else if bps == 64 && fmt == SAMPLEFORMAT_IEEEFP {
+        let slice = unsafe {
+            std::slice::from_raw_parts_mut(nodata_buf.as_mut_ptr() as *mut f64, pixel_count)
+        };
+        slice.fill(nodata);
+    } else if bps == 16 && fmt == SAMPLEFORMAT_INT {
+        let slice = unsafe {
+            std::slice::from_raw_parts_mut(nodata_buf.as_mut_ptr() as *mut i16, pixel_count)
+        };
+        slice.fill(nodata as i16);
+    } else if bps == 16 && fmt == SAMPLEFORMAT_UINT {
+        let slice = unsafe {
+            std::slice::from_raw_parts_mut(nodata_buf.as_mut_ptr() as *mut u16, pixel_count)
+        };
+        slice.fill(nodata as u16);
+    } else if bps == 8 && fmt == SAMPLEFORMAT_UINT {
+        let slice = unsafe { std::slice::from_raw_parts_mut(nodata_buf.as_mut_ptr(), pixel_count) };
+        slice.fill(nodata as u8);
+    } else {
+        // Default: fill with zeros
+        nodata_buf.fill(0);
+    }
+    nodata_buf
+}
+
 #[allow(clippy::too_many_arguments)]
 unsafe fn process_striped_image(
     tif_src: *mut TIFF,
@@ -1199,6 +1247,13 @@ unsafe fn process_striped_image(
         return Err(anyhow!("Invalid scanline size: {}", in_scanline));
     }
 
+    // Get strip offsets and byte counts for sparse TIFF detection
+    let (strip_offsets, strip_byte_counts, strip_count) =
+        crate::ffi::get_strip_offsets_and_counts(tif_src);
+
+    // Get GDAL nodata value for sparse strip filling
+    let nodata = crate::ffi::get_gdal_nodata(tif_src).unwrap_or(0.0);
+
     let num_samples = if planar == PLANARCONFIG_SEPARATE {
         spp
     } else {
@@ -1219,6 +1274,16 @@ unsafe fn process_striped_image(
     let mut buf_in = vec![0u8; in_scanline];
     let mut buf_out = vec![0u8; out_row_size];
 
+    // Determine rows per strip to map row -> strip index
+    let mut rows_per_strip: u32 = 0;
+    TIFFGetField(tif_src, TIFFTAG_ROWSPERSTRIP, &mut rows_per_strip);
+    if rows_per_strip == 0 {
+        rows_per_strip = h; // Default to whole image
+    }
+
+    // Pre-compute nodata bytes for the scanline
+    let nodata_bytes = create_nodata_scanline(nodata, bps, fmt, w, spp, planar, &buf_in);
+
     for s in 0..num_samples {
         for row in 0..h {
             if verbose && row % 1000 == 0 {
@@ -1235,7 +1300,19 @@ unsafe fn process_striped_image(
                 }
             }
 
-            if TIFFReadScanline(tif_src, buf_in.as_mut_ptr() as *mut _, row, s) < 0 {
+            // Calculate strip index for this row
+            let strip_index = row / rows_per_strip;
+
+            // Check if this strip is sparse (offset=0 && byte_count=0)
+            let is_sparse = !strip_offsets.is_null()
+                && !strip_byte_counts.is_null()
+                && strip_index < strip_count
+                && crate::ffi::is_strip_sparse(strip_offsets, strip_byte_counts, strip_index);
+
+            if is_sparse {
+                // Fill buffer with nodata value
+                buf_in.copy_from_slice(&nodata_bytes);
+            } else if TIFFReadScanline(tif_src, buf_in.as_mut_ptr() as *mut _, row, s) < 0 {
                 return Err(anyhow!("Failed to read scanline {} sample {}", row, s));
             }
 
@@ -1280,6 +1357,9 @@ unsafe fn process_striped_image(
             }
         }
     }
+
+    // Free the sparse detection arrays
+    crate::ffi::free_offsets_and_counts(strip_offsets, strip_byte_counts);
 
     Ok(())
 }
