@@ -5,7 +5,7 @@
 
 This report covers two distinct things:
 
-- **Part A** — the 8 images the **integration suite** (`cargo test`) excludes via
+- **Part A** — the 9 images the **integration suite** (`cargo test`) excludes via
   the `skip_files` allowlist in `tests/integration_tests.rs`.
 - **Part B** — the images the **visual report** (`tests/README.md`, produced by
   `test-report`) marks **"Verification Failed"** (26 lossless, 205 lossy).
@@ -19,11 +19,14 @@ non-standard compression combo**. See Part B.
 
 ---
 
-# Part A — Integration-suite skip list (8 images)
+# Part A — Integration-suite skip list (9 images)
 
 These are excluded because of source-file corruption or libtiff format
-limitations — not bugs. As of v0.4.0 **none crash** (all exit 0 after the
-YCbCr-subsampling guards); they stay skipped because faithful round-trip
+limitations — not bugs. **None crash**: since errors set the exit code, all 9
+are refused with an error message and exit 1, leaving no output
+(`test_skipped_files_fail_without_crashing` enforces this). `quad-jpeg.tif`
+used to segfault while copying ReferenceBlackWhite (tag 532 was mistaken for
+YCbCrCoefficients); fixed. They stay skipped because faithful round-trip
 verification can't be satisfied for these formats.
 
 | Image | Format | Why skipped |
@@ -36,8 +39,9 @@ verification can't be satisfied for these formats.
 | `quad-jpeg.tif` | JPEG, striped | downsampled JPEG needs `JPEGCOLORMODE_RGB` for scanline access |
 | `tiled-jpeg-ycbcr.tif` | JPEG/YCbCr | JPEG/YCbCr handling |
 | `dscf0013.tif` | Uncompressed + YCbCr (2,1) | non-(1,1) YCbCr subsampling, explicitly rejected |
+| `sample-get-lzw-stuck.tiff` | LZW, tiled | truncated file (tile 0: 6731 of 11457 bytes); now correctly fails with non-zero exit |
 
-Recommendation: keep all 8 skipped; revisit if the suite ever separates "must not
+Recommendation: keep all 9 skipped; revisit if the suite ever separates "must not
 crash" (now satisfied) from "must round-trip faithfully".
 
 ---

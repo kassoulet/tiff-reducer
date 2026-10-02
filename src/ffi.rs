@@ -5,6 +5,9 @@ use libc::{c_char, c_int, c_void};
 #[allow(clippy::upper_case_acronyms)]
 pub enum TIFF {}
 
+/// `TIFFExtendProc` from tiffio.h
+pub type TIFFExtendProc = unsafe extern "C" fn(*mut TIFF);
+
 // Matches libtiff 4.x TIFFFieldInfo struct exactly (see tiffio.h)
 #[repr(C)]
 pub struct TIFFFieldInfo {
@@ -37,8 +40,6 @@ extern "C" {
     #[allow(dead_code)]
     pub fn TIFFSetDirectory(tif: *mut TIFF, dir: u16) -> c_int;
     pub fn TIFFWriteDirectory(tif: *mut TIFF) -> c_int;
-    pub fn TIFFCreateDirectory(tif: *mut TIFF) -> c_int;
-    pub fn TIFFFlush(tif: *mut TIFF) -> c_int;
 
     #[allow(dead_code)]
     pub fn TIFFIsBigTIFF(tif: *mut TIFF) -> c_int;
@@ -51,6 +52,9 @@ extern "C" {
     // Tag registration for custom/GeoTIFF tags
     pub fn TIFFMergeFieldInfo(tif: *mut TIFF, info: *const TIFFFieldInfo, n: i32) -> c_int;
 
+    // Hook run by every TIFFDefaultDirectory, i.e. before any directory is read
+    pub fn TIFFSetTagExtender(extender: Option<TIFFExtendProc>) -> Option<TIFFExtendProc>;
+
     // Re-read directory after registering tags
     pub fn TIFFReadDirectory(tif: *mut TIFF) -> c_int;
 
@@ -61,22 +65,21 @@ extern "C" {
     pub fn TIFFIsTiled(tif: *mut TIFF) -> c_int;
     pub fn TIFFTileSize(tif: *mut TIFF) -> u32;
     pub fn TIFFNumberOfTiles(tif: *mut TIFF) -> u32;
-    pub fn TIFFReadEncodedTile(tif: *mut TIFF, tile: u32, buf: *mut c_void, size: u32) -> i32;
-    pub fn TIFFReadTile(
-        tif: *mut TIFF,
-        x: u32,
-        y: u32,
-        z: u16,
-        s: u16,
-        buf: *mut c_void,
-        size: u32,
-    ) -> i32;
-    pub fn TIFFWriteEncodedTile(tif: *mut TIFF, tile: u32, buf: *mut c_void, size: u32) -> i32;
-    pub fn TIFFWriteTile(tif: *mut TIFF, buf: *mut c_void, x: u32, y: u32, z: u16, s: u16) -> i32;
+    // Signatures follow tiffio.h exactly (tmsize_t = isize, z is uint32_t).
+    pub fn TIFFReadEncodedTile(tif: *mut TIFF, tile: u32, buf: *mut c_void, size: isize) -> isize;
+    pub fn TIFFReadTile(tif: *mut TIFF, buf: *mut c_void, x: u32, y: u32, z: u32, s: u16) -> isize;
+    pub fn TIFFWriteEncodedTile(tif: *mut TIFF, tile: u32, buf: *mut c_void, size: isize) -> isize;
+    pub fn TIFFWriteTile(tif: *mut TIFF, buf: *mut c_void, x: u32, y: u32, z: u32, s: u16)
+        -> isize;
 
-    // Strip functions for sparse TIFF detection
+    // Strip/tile helpers (sparse TIFF detection)
     pub fn TIFFNumberOfStrips(tif: *mut TIFF) -> u32;
-    pub fn TIFFReadEncodedStrip(tif: *mut TIFF, strip: u32, buf: *mut c_void, size: u32) -> i32;
+    pub fn TIFFComputeStrip(tif: *mut TIFF, row: u32, sample: u16) -> u32;
+    pub fn TIFFComputeTile(tif: *mut TIFF, x: u32, y: u32, z: u32, s: u16) -> u32;
+    pub fn TIFFGetStrileOffset(tif: *mut TIFF, strile: u32) -> u64;
+    pub fn TIFFGetStrileByteCount(tif: *mut TIFF, strile: u32) -> u64;
+    pub fn TIFFReadEncodedStrip(tif: *mut TIFF, strip: u32, buf: *mut c_void, size: isize)
+        -> isize;
 }
 
 // Suppress libtiff warnings
@@ -196,14 +199,15 @@ pub const PHOTOMETRIC_PALETTE: u16 = 3;
 pub const PHOTOMETRIC_SEPARATED: u16 = 5; // CMYK
 pub const PHOTOMETRIC_YCBCR: u16 = 6;
 
-// SubFileType values
-pub const FILETYPE_REDUCEDIMAGE: u32 = 0x1;
+// NewSubfileType tag and its bit flags
 pub const TIFFTAG_SUBFILETYPE: u32 = 254;
+pub const FILETYPE_REDUCEDIMAGE: u32 = 0x1;
 
-// YCbCr tags
+// YCbCr / colorimetry tags (tiff.h)
+pub const TIFFTAG_YCBCRCOEFFICIENTS: u32 = 529;
 pub const TIFFTAG_YCBCRSUBSAMPLING: u32 = 530;
 pub const TIFFTAG_YCBCRPOSITION: u32 = 531;
-pub const TIFFTAG_YCBCRCOEFFICIENTS: u32 = 532;
+pub const TIFFTAG_REFERENCEBLACKWHITE: u32 = 532;
 
 // CMYK/Ink-related tags
 pub const TIFFTAG_INKSET: u32 = 332;
@@ -215,162 +219,27 @@ pub const TIFFTAG_NUMBEROFINKS: u32 = 345;
 pub const TIFFTAG_GDAL_METADATA: u32 = 42112;
 pub const TIFFTAG_GDAL_NODATA: u32 = 42113;
 
-/// Read strip/tile offsets and byte counts for sparse TIFF detection
-/// Returns (offsets, byte_counts, count) - arrays must be freed by caller
-pub unsafe fn get_strip_offsets_and_counts(tif: *mut TIFF) -> (*mut u64, *mut u64, u32) {
-    // Get number of strips
-    let nstrips = TIFFNumberOfStrips(tif);
-    if nstrips == 0 {
-        return (std::ptr::null_mut(), std::ptr::null_mut(), 0);
-    }
-
-    // Try to get StripByteCounts to detect sparse strips (byte_count == 0 means sparse)
-    // First try to get as LONG8 (BigTIFF)
-    let mut byte_counts_ptr: *mut u64 = std::ptr::null_mut();
-    let mut count: u32 = 0;
-
-    if TIFFGetField(
-        tif,
-        TIFFTAG_STRIPBYTECOUNTS,
-        &mut count,
-        &mut byte_counts_ptr,
-    ) != 0
-        && count == nstrips
-        && !byte_counts_ptr.is_null()
-    {
-        // Successfully got byte counts as LONG8
-        let offsets = libc::malloc(nstrips as usize * 8) as *mut u64;
-        let byte_counts = libc::malloc(nstrips as usize * 8) as *mut u64;
-
-        if !offsets.is_null() && !byte_counts.is_null() {
-            // Copy byte counts
-            for i in 0..nstrips as usize {
-                *byte_counts.add(i) = *byte_counts_ptr.add(i);
-                // For offsets, we don't have them, but we can infer sparsity from byte_counts
-                // If byte_count == 0, it's sparse
-                *offsets.add(i) = if *byte_counts.add(i) == 0 { 0 } else { 1 };
-            }
-            return (offsets, byte_counts, nstrips);
-        }
-    }
-
-    // Try LONG (classic TIFF - 32-bit)
-    let mut byte_counts32_ptr: *mut u32 = std::ptr::null_mut();
-    if TIFFGetField(
-        tif,
-        TIFFTAG_STRIPBYTECOUNTS,
-        &mut count,
-        &mut byte_counts32_ptr,
-    ) != 0
-        && count == nstrips
-        && !byte_counts32_ptr.is_null()
-    {
-        // Successfully got byte counts as LONG
-        let offsets = libc::malloc(nstrips as usize * 8) as *mut u64;
-        let byte_counts = libc::malloc(nstrips as usize * 8) as *mut u64;
-
-        if !offsets.is_null() && !byte_counts.is_null() {
-            for i in 0..nstrips as usize {
-                let bc = *byte_counts32_ptr.add(i) as u64;
-                *byte_counts.add(i) = bc;
-                *offsets.add(i) = if bc == 0 { 0 } else { 1 };
-            }
-            return (offsets, byte_counts, nstrips);
-        }
-    }
-
-    // Fallback: allocate dummy arrays - all non-sparse
-    let offsets = libc::malloc(nstrips as usize * 8) as *mut u64;
-    let byte_counts = libc::malloc(nstrips as usize * 8) as *mut u64;
-
-    if !offsets.is_null() && !byte_counts.is_null() {
-        for i in 0..nstrips as usize {
-            *offsets.add(i) = 1;
-            *byte_counts.add(i) = 1;
-        }
-        return (offsets, byte_counts, nstrips);
-    }
-
-    (std::ptr::null_mut(), std::ptr::null_mut(), 0)
-}
-
-/// Get tile offsets and byte counts for sparse TIFF detection
-pub unsafe fn get_tile_offsets_and_counts(tif: *mut TIFF) -> (*mut u64, *mut u64, u32) {
-    let mut count: u32 = 0;
-    let mut offsets_ptr: *mut u64 = std::ptr::null_mut();
-    let mut byte_counts_ptr: *mut u64 = std::ptr::null_mut();
-
-    // Try LONG8 first (BigTIFF) - need pointer-to-pointer for array data
-    if TIFFGetField(tif, TIFFTAG_TILEOFFSETS, &mut count, &mut offsets_ptr) != 0
-        && TIFFGetField(
-            tif,
-            TIFFTAG_TILEBYTECOUNTS,
-            &mut count,
-            &mut byte_counts_ptr,
-        ) != 0
-    {
-        return (offsets_ptr, byte_counts_ptr, count);
-    }
-
-    // Fall back to LONG (classic TIFF)
-    let mut count32: u32 = 0;
-    let mut offsets32_ptr: *mut u32 = std::ptr::null_mut();
-    let mut byte_counts32_ptr: *mut u32 = std::ptr::null_mut();
-
-    if TIFFGetField(tif, TIFFTAG_TILEOFFSETS, &mut count32, &mut offsets32_ptr) != 0
-        && TIFFGetField(
-            tif,
-            TIFFTAG_TILEBYTECOUNTS,
-            &mut count32,
-            &mut byte_counts32_ptr,
-        ) != 0
-    {
-        let offsets64 = libc::malloc(count32 as usize * 8) as *mut u64;
-        let byte_counts64 = libc::malloc(count32 as usize * 8) as *mut u64;
-        if !offsets64.is_null() && !byte_counts64.is_null() {
-            for i in 0..count32 as usize {
-                *offsets64.add(i) = *offsets32_ptr.add(i) as u64;
-                *byte_counts64.add(i) = *byte_counts32_ptr.add(i) as u64;
-            }
-            return (offsets64, byte_counts64, count32);
-        }
-    }
-
-    (std::ptr::null_mut(), std::ptr::null_mut(), 0)
-}
-
-/// Get GDAL nodata value
+/// Get the GDAL nodata value of the current directory.
+///
+/// GDAL stores it as an ASCII string (e.g. "-9999", "nan"); the tag must have
+/// been registered via `metadata::install_tag_extender` so that libtiff hands
+/// it back as a plain `char*`.
 pub unsafe fn get_gdal_nodata(tif: *mut TIFF) -> Option<f64> {
-    let mut nodata: f64 = 0.0;
-    if TIFFGetField(tif, TIFFTAG_GDAL_NODATA, &mut nodata) != 0 {
-        Some(nodata)
-    } else {
-        None
+    let mut text: *mut c_char = std::ptr::null_mut();
+    if TIFFGetField(tif, TIFFTAG_GDAL_NODATA, &mut text) == 0 || text.is_null() {
+        return None;
     }
+    std::ffi::CStr::from_ptr(text)
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<f64>()
+        .ok()
 }
 
-/// Check if a strip is sparse (offset=0 && byte_count=0)
-pub fn is_strip_sparse(offsets: *const u64, byte_counts: *const u64, strip: u32) -> bool {
-    if offsets.is_null() || byte_counts.is_null() {
-        return false;
-    }
-    unsafe { *offsets.add(strip as usize) == 0 && *byte_counts.add(strip as usize) == 0 }
-}
-
-/// Check if a tile is sparse (offset=0 && byte_count=0)
-pub fn is_tile_sparse(offsets: *const u64, byte_counts: *const u64, tile: u32) -> bool {
-    if offsets.is_null() || byte_counts.is_null() {
-        return false;
-    }
-    unsafe { *offsets.add(tile as usize) == 0 && *byte_counts.add(tile as usize) == 0 }
-}
-
-/// Free arrays allocated by get_strip_offsets_and_counts or get_tile_offsets_and_counts
-pub unsafe fn free_offsets_and_counts(offsets: *mut u64, byte_counts: *mut u64) {
-    if !offsets.is_null() {
-        libc::free(offsets as *mut c_void);
-    }
-    if !byte_counts.is_null() {
-        libc::free(byte_counts as *mut c_void);
-    }
+/// Whether strip/tile `strile` of the current directory is sparse, i.e. GDAL
+/// wrote no data for it (offset = 0 and byte count = 0). Readers must fill it
+/// with the nodata value instead of decoding it, which libtiff refuses to do.
+pub unsafe fn is_strile_sparse(tif: *mut TIFF, strile: u32) -> bool {
+    TIFFGetStrileOffset(tif, strile) == 0 && TIFFGetStrileByteCount(tif, strile) == 0
 }

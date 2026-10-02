@@ -235,6 +235,9 @@ Options:
 - `--benchmark`: Display timing and throughput metrics.
 - `-j, --jobs <JOBS>`: Number of parallel jobs (default: number of CPUs).
 - `--dry-run`: Benchmark without writing to disk.
+- `--tile [SIZE]`: Write tiled output; `SIZE` is `N` or `WIDTHxHEIGHT`, multiples of 16 (default `512`).
+- `--overviews <FACTORS>`: Add internal overviews (pyramids) to the first page, e.g. `2,4,8,16`. Block average that ignores NoData/NaN; nearest neighbour for palette images. Existing overviews are replaced.
+- `--checksum`: Re-read the written file before anything is replaced: lossless output must decode to exactly the source pixels (overviews and `--quantize` output to exactly what was encoded); lossy output must decode.
 
 ### `analyze`
 - Displays dimensions, channels, bit depth, format, and current compression.

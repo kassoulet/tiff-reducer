@@ -7,14 +7,18 @@ mod wipe;
 
 use crate::ffi::*;
 use crate::metadata::clone_metadata;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
+use std::cell::RefCell;
+use std::collections::hash_map::DefaultHasher;
 use std::ffi::CString;
 use std::fs;
+use std::hash::Hasher;
 use std::os::unix::io::AsRawFd;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Sanitize a filename to prevent path traversal attacks
 /// Returns None if the filename contains path separators or is invalid
@@ -65,32 +69,72 @@ fn new_file_progress(m: &MultiProgress, message: String) -> ProgressBar {
     pb
 }
 
+/// Whether `--output` names a directory: an existing one, or a path ending in
+/// a separator (created when the first file is written).
+fn is_output_dir(out: &Path) -> bool {
+    out.is_dir()
+        || out
+            .as_os_str()
+            .as_encoded_bytes()
+            .last()
+            .is_some_and(|&b| std::path::is_separator(b as char))
+}
+
+/// With more than one input, --output must be a directory; otherwise every
+/// file would resolve to the same target (and temp) path and the parallel
+/// workers would race to write/rename it, corrupting the result.
+fn check_batch_output(file_count: usize, output: &Option<PathBuf>) -> Result<()> {
+    match output {
+        Some(out) if file_count > 1 && !is_output_dir(out) => Err(anyhow!(
+            "Multiple input files require --output to be a directory (existing, or ending in '/'), not a file: {:?}",
+            out
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Resolve the destination path for one input file given the optional
 /// `--output`. With a directory output, the input's filename is sanitized and
 /// joined; with a file output the path is used directly; with no output the
-/// input is overwritten in place. Returns `None` (after finishing `pb` with an
-/// error) when a directory output would produce an unsafe filename.
-fn resolve_target_output(
-    file_path: &Path,
-    output: &Option<PathBuf>,
-    pb: &ProgressBar,
-) -> Option<PathBuf> {
+/// input is overwritten in place. Fails when a directory output would produce
+/// an unsafe filename. Missing directories are created only when the output is
+/// actually written, so dry runs and failed inputs leave nothing behind.
+fn resolve_target_output(file_path: &Path, output: &Option<PathBuf>) -> Result<PathBuf> {
     match output {
-        Some(out) if out.is_dir() => {
+        Some(out) if is_output_dir(out) => {
             // Sanitize filename to prevent path traversal attacks
-            match sanitize_filename(file_path.file_name().unwrap_or(file_path.as_os_str())) {
-                Some(safe_name) => Some(out.join(safe_name)),
-                None => {
-                    pb.finish_with_message(format!(
-                        "Error: Invalid filename {:?}",
-                        file_path.file_name()
-                    ));
-                    None
-                }
-            }
+            sanitize_filename(file_path.file_name().unwrap_or(file_path.as_os_str()))
+                .map(|safe_name| out.join(safe_name))
+                .ok_or_else(|| anyhow!("Invalid filename {:?}", file_path.file_name()))
         }
-        Some(out) => Some(out.clone()),
-        None => Some(file_path.to_path_buf()),
+        Some(out) => Ok(out.clone()),
+        None => Ok(file_path.to_path_buf()),
+    }
+}
+
+/// Print a per-file error on stderr. Progress bars are hidden when stderr is
+/// not a terminal, so their messages cannot be the only place errors appear.
+fn report_file_error(m: &MultiProgress, pb: &ProgressBar, file_path: &Path, e: &anyhow::Error) {
+    pb.finish_and_clear();
+    m.suspend(|| {
+        eprintln!(
+            "[{}] Error: {:#}",
+            file_path
+                .file_name()
+                .unwrap_or(file_path.as_os_str())
+                .to_string_lossy(),
+            e
+        )
+    });
+}
+
+/// Turn the number of failed files of a batch into the command's result, so
+/// the process exits non-zero when anything failed.
+fn batch_result(failed: usize, total: usize) -> Result<()> {
+    if failed > 0 {
+        Err(anyhow!("{} of {} file(s) failed", failed, total))
+    } else {
+        Ok(())
     }
 }
 
@@ -104,64 +148,64 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-/// Compress one or more TIFF files
-        Compress {
-            /// Input file(s) or directory
-            #[arg(required = true)]
-            input: Vec<PathBuf>,
+    /// Compress one or more TIFF files
+    Compress {
+        /// Input file(s) or directory
+        #[arg(required = true)]
+        input: Vec<PathBuf>,
 
-            /// Output file or directory (overwrites input if omitted)
-            #[arg(short, long)]
-            output: Option<PathBuf>,
+        /// Output file or directory (overwrites input if omitted)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
 
-            /// Compression format to use
-            #[arg(short, long, value_enum, default_value_t = CompressionFormat::Zstd, conflicts_with = "lossy")]
-            format: CompressionFormat,
+        /// Compression format to use
+        #[arg(short, long, value_enum, default_value_t = CompressionFormat::Zstd, conflicts_with = "lossy")]
+        format: CompressionFormat,
 
-            /// Compression level (Zstd: 1-22 default 19, Deflate/LZMA: 1-9, JPEG/WebP: 1-100)
-            #[arg(short, long)]
-            level: Option<u32>,
+        /// Compression level (Zstd: 1-22 default 19, Deflate/LZMA: 1-9, JPEG/WebP: 1-100)
+        #[arg(short, long)]
+        level: Option<u32>,
 
-            /// Use lossy compression (tries WebP and JPEG, picks smallest)
-            #[arg(long)]
-            lossy: bool,
+        /// Use lossy compression (tries WebP and JPEG, picks smallest)
+        #[arg(long)]
+        lossy: bool,
 
-            /// Quantize to 8-bit
-            #[arg(long)]
-            quantize: bool,
+        /// Quantize to 8-bit
+        #[arg(long)]
+        quantize: bool,
 
-            /// Try all compression formats and display a report
-            #[arg(long)]
-            extreme: bool,
+        /// Try all compression formats and display a report
+        #[arg(long)]
+        extreme: bool,
 
-            /// Perform compression but do not write to disk
-            #[arg(long)]
-            dry_run: bool,
+        /// Perform compression but do not write to disk
+        #[arg(long)]
+        dry_run: bool,
 
-            /// Run benchmark mode with timing and throughput metrics
-            #[arg(long)]
-            benchmark: bool,
+        /// Run benchmark mode with timing and throughput metrics
+        #[arg(long)]
+        benchmark: bool,
 
-            /// Number of parallel jobs (default: number of CPUs)
-            #[arg(short, long)]
-            jobs: Option<usize>,
+        /// Number of parallel jobs (default: number of CPUs)
+        #[arg(short, long)]
+        jobs: Option<usize>,
 
-            /// Enable verbose logging for detailed progress
-            #[arg(short, long)]
-            verbose: bool,
+        /// Enable verbose logging for detailed progress
+        #[arg(short, long)]
+        verbose: bool,
 
-            /// Output as tiled TIFF with specified tile size (default: 512x512)
-            #[arg(long, value_name = "WIDTHxHEIGHT", num_args = 0..=2, value_delimiter = 'x')]
-            tile: Vec<u32>,
+        /// Write tiled output. SIZE is N or WIDTHxHEIGHT, multiples of 16 (default: 512)
+        #[arg(long, value_name = "SIZE", num_args = 0..=1, default_missing_value = "512", value_parser = parse_tile_size)]
+        tile: Option<(u32, u32)>,
 
-            /// Generate internal overviews (pyramids) at specified levels (e.g., 2,4,8,16)
-            #[arg(long, value_name = "LEVELS", value_delimiter = ',')]
-            overviews: Vec<u32>,
+        /// Add internal overviews to the first page, e.g. 2,4,8,16 (block average; nearest for palettes)
+        #[arg(long, value_name = "FACTORS", value_delimiter = ',', value_parser = clap::value_parser!(u32).range(2..))]
+        overviews: Vec<u32>,
 
-            /// Verify pixel data integrity with checksum before/after compression
-            #[arg(long)]
-            checksum: bool,
-        },
+        /// Re-read the written file and check its pixels against the source before replacing anything
+        #[arg(long)]
+        checksum: bool,
+    },
     /// Analyze a TIFF file and display metadata
     Analyze {
         /// Input TIFF file
@@ -251,6 +295,41 @@ impl Predictor {
     }
 }
 
+/// Parse `--tile`: `N` (square) or `WIDTHxHEIGHT`, both multiples of 16 as the
+/// TIFF specification requires for tile dimensions.
+fn parse_tile_size(s: &str) -> std::result::Result<(u32, u32), String> {
+    let (w, h) = s.split_once(['x', 'X']).unwrap_or((s, s));
+    let parse = |v: &str| {
+        v.trim()
+            .parse::<u32>()
+            .map_err(|_| format!("invalid tile size '{s}', expected N or WIDTHxHEIGHT"))
+    };
+    let (w, h) = (parse(w)?, parse(h)?);
+    if w == 0 || h == 0 || !w.is_multiple_of(16) || !h.is_multiple_of(16) {
+        return Err(format!(
+            "tile dimensions must be non-zero multiples of 16, got {w}x{h}"
+        ));
+    }
+    Ok((w, h))
+}
+
+/// Output layout options shared by every compression pass of a file.
+#[derive(Clone, Debug, Default)]
+struct OutputOptions {
+    /// Tile size for tiled output; `None` writes one strip per image.
+    tile: Option<(u32, u32)>,
+    /// Overview decimation factors, ascending and deduplicated (each >= 2).
+    overviews: Vec<u32>,
+}
+
+impl OutputOptions {
+    fn new(tile: Option<(u32, u32)>, mut overviews: Vec<u32>) -> Self {
+        overviews.sort_unstable();
+        overviews.dedup();
+        OutputOptions { tile, overviews }
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -271,6 +350,7 @@ fn main() -> Result<()> {
     unsafe {
         suppress_warnings();
     }
+    crate::metadata::install_tag_extender();
 
     match cli.command {
         Commands::Compress {
@@ -289,9 +369,10 @@ fn main() -> Result<()> {
             overviews,
             checksum,
         } => {
+            let layout = OutputOptions::new(tile, overviews);
             compress_command(
                 input, output, format, level, lossy, quantize, extreme, dry_run, benchmark, jobs,
-                verbose, tile, overviews, checksum,
+                verbose, layout, checksum,
             )?;
         }
         Commands::Analyze { path } => {
@@ -435,30 +516,18 @@ fn compress_command(
     benchmark: bool,
     jobs: Option<usize>,
     verbose: bool,
-    tile: Vec<u32>,
-    overviews: Vec<u32>,
+    layout: OutputOptions,
     checksum: bool,
 ) -> Result<()> {
     let files = expand_tiff_inputs(&input)?;
 
-    // With more than one input, --output must be a directory; otherwise every
-    // file would resolve to the same target (and temp) path and the parallel
-    // workers would race to write/rename it, corrupting the result.
-    if files.len() > 1 {
-        if let Some(ref out) = output {
-            if !out.is_dir() {
-                return Err(anyhow!(
-                    "Multiple input files require --output to be an existing directory, not a file: {:?}",
-                    out
-                ));
-            }
-        }
-    }
+    check_batch_output(files.len(), &output)?;
 
     let m = MultiProgress::new();
 
     // Use rayon for file-level parallelism with configurable job count
     let num_jobs = jobs.unwrap_or_else(num_cpus::get);
+    let failed = AtomicUsize::new(0);
 
     files
         .par_iter()
@@ -472,31 +541,29 @@ fn compress_command(
                 ),
             );
 
-            let target_output = match resolve_target_output(file_path, &output, &pb) {
-                Some(t) => t,
-                None => return,
-            };
-
-            match process_single_file(
-                file_path,
-                &target_output,
-                output.is_some(),
-                format,
-                level,
-                lossy,
-                quantize,
-                extreme,
-                dry_run,
-                benchmark,
-                verbose,
-                tile.clone(),
-                overviews.clone(),
-                checksum,
-                &pb,
-            ) {
+            let result = resolve_target_output(file_path, &output).and_then(|target_output| {
+                process_single_file(
+                    file_path,
+                    &target_output,
+                    output.is_some(),
+                    format,
+                    level,
+                    lossy,
+                    quantize,
+                    extreme,
+                    dry_run,
+                    benchmark,
+                    verbose,
+                    &layout,
+                    checksum,
+                    &pb,
+                )
+            });
+            match result {
                 Ok((original, compressed, best_fmt, is_dry_run)) => {
                     pb.finish();
-                    if !extreme && !lossy {
+                    // --extreme/--lossy print their own table; still report --checksum
+                    if (!extreme && !lossy) || checksum {
                         let ratio = if original > 0 {
                             (1.0 - (compressed as f64 / original as f64)) * 100.0
                         } else {
@@ -517,12 +584,13 @@ fn compress_command(
                     }
                 }
                 Err(e) => {
-                    pb.finish_with_message(format!("Error: {}", e));
+                    failed.fetch_add(1, Ordering::Relaxed);
+                    report_file_error(&m, &pb, file_path, &e);
                 }
             }
         });
 
-    Ok(())
+    batch_result(failed.into_inner(), files.len())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -538,8 +606,7 @@ fn process_single_file(
     dry_run: bool,
     benchmark: bool,
     verbose: bool,
-    tile: Vec<u32>,
-    overviews: Vec<u32>,
+    layout: &OutputOptions,
     checksum: bool,
     pb: &ProgressBar,
 ) -> Result<(u64, u64, String, bool)> {
@@ -645,8 +712,9 @@ fn process_single_file(
             let cid = fmt.to_ffi();
             let pid = pred.to_ffi();
 
-            // Only add to results if compression actually succeeded
-            if let Ok(size) = run_compression_to_fd(
+            // Only add to results if compression actually succeeded.
+            // Trials keep the output layout (it affects size) but skip --checksum.
+            if let Ok((size, _)) = run_compression_to_fd(
                 input,
                 temp_file,
                 cid,
@@ -655,9 +723,8 @@ fn process_single_file(
                 quantize,
                 verbose,
                 total_pages,
-                &tile,
-                &overviews,
-                checksum,
+                layout,
+                false,
                 pb,
             ) {
                 if size > 0 && size < u64::MAX {
@@ -724,7 +791,7 @@ fn process_single_file(
         let cid = best_format.to_ffi();
         let pid = best_predictor.to_ffi();
 
-        let dry_run_size = run_compression_to_fd(
+        let (dry_run_size, verification) = run_compression_to_fd(
             input,
             temp_file,
             cid,
@@ -733,8 +800,7 @@ fn process_single_file(
             quantize,
             verbose,
             total_pages,
-            &tile,
-            &overviews,
+            layout,
             checksum,
             pb,
         )?;
@@ -742,7 +808,7 @@ fn process_single_file(
         return Ok((
             original_size,
             dry_run_size,
-            format!("{best_format}+{best_predictor}"),
+            result_label(best_format, best_predictor, verification),
             true,
         ));
     }
@@ -750,7 +816,7 @@ fn process_single_file(
     // Final compression with best format and predictor
     let cid = best_format.to_ffi();
     let pid = best_predictor.to_ffi();
-    run_compression_pass(
+    let verification = run_compression_pass(
         input,
         output,
         cid,
@@ -759,8 +825,7 @@ fn process_single_file(
         quantize,
         verbose,
         total_pages,
-        &tile,
-        &overviews,
+        layout,
         checksum,
         pb,
     )?;
@@ -797,9 +862,21 @@ fn process_single_file(
     Ok((
         original_size,
         compressed_size,
-        format!("{best_format}+{best_predictor}"),
+        result_label(best_format, best_predictor, verification),
         false,
     ))
+}
+
+/// Codec description for the per-file summary line, plus the `--checksum` outcome.
+fn result_label(
+    format: CompressionFormat,
+    predictor: Predictor,
+    verification: Option<Verification>,
+) -> String {
+    match verification {
+        Some(v) => format!("{format}+{predictor}, {v}"),
+        None => format!("{format}+{predictor}"),
+    }
 }
 
 /// Get basic info about a TIFF file
@@ -849,6 +926,145 @@ fn count_tiff_pages(path: &Path) -> Result<u16> {
     }
 }
 
+/// An open libtiff handle, closed on drop so error paths cannot leak it.
+struct TiffHandle(*mut TIFF);
+
+impl TiffHandle {
+    fn open(path: &Path, mode: &str) -> Result<Self> {
+        let c_path = CString::new(path.to_str().ok_or_else(|| anyhow!("Invalid path"))?)?;
+        let c_mode = CString::new(mode)?;
+        let tif = unsafe { TIFFOpen(c_path.as_ptr(), c_mode.as_ptr()) };
+        if tif.is_null() {
+            return Err(anyhow!("Failed to open TIFF {:?} (mode {})", path, mode));
+        }
+        Ok(TiffHandle(tif))
+    }
+
+    /// Open a libtiff handle on a duplicate of `file`'s descriptor; libtiff
+    /// closes the duplicate, `file` stays usable.
+    fn from_file(file: &std::fs::File, mode: &str) -> Result<Self> {
+        let c_mode = CString::new(mode)?;
+        unsafe {
+            let fd = libc::dup(file.as_raw_fd());
+            if fd < 0 {
+                return Err(anyhow!("Failed to duplicate file descriptor"));
+            }
+            // libtiff reads the header at the current offset, which the
+            // duplicate shares with `file`
+            libc::lseek(fd, 0, libc::SEEK_SET);
+            let tif = TIFFFdOpen(fd, c"dry_run".as_ptr(), c_mode.as_ptr());
+            if tif.is_null() {
+                libc::close(fd);
+                return Err(anyhow!(
+                    "Failed to open TIFF on file descriptor (mode {})",
+                    mode
+                ));
+            }
+            Ok(TiffHandle(tif))
+        }
+    }
+
+    fn ptr(&self) -> *mut TIFF {
+        self.0
+    }
+}
+
+impl Drop for TiffHandle {
+    fn drop(&mut self) {
+        unsafe { TIFFClose(self.0) };
+    }
+}
+
+/// Temporary output file, deleted on drop unless `persist` renamed it.
+struct TempOutput {
+    path: PathBuf,
+    persisted: bool,
+}
+
+impl TempOutput {
+    fn new(path: PathBuf) -> Self {
+        TempOutput {
+            path,
+            persisted: false,
+        }
+    }
+
+    fn persist(mut self, target: &Path) -> Result<()> {
+        fs::rename(&self.path, target)
+            .with_context(|| format!("Failed to rename {:?} to {:?}", self.path, target))?;
+        self.persisted = true;
+        Ok(())
+    }
+}
+
+impl Drop for TempOutput {
+    fn drop(&mut self) {
+        if !self.persisted {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// libtiff write mode: BigTIFF when the input is large enough that the output
+/// could exceed the classic 4 GiB limit.
+fn write_mode(input: &Path) -> Result<&'static str> {
+    Ok(if input.metadata()?.len() > 4 * 1024 * 1024 * 1024 {
+        "w8"
+    } else {
+        "w"
+    })
+}
+
+/// Encode every page of `tif_src` into `tif_dst`. Returns what was written for
+/// each output IFD (base images and generated overviews), for `--checksum`.
+#[allow(clippy::too_many_arguments)]
+unsafe fn compress_pages(
+    input: &Path,
+    tif_src: *mut TIFF,
+    tif_dst: *mut TIFF,
+    compression: u16,
+    predictor: u16,
+    level: Option<u32>,
+    quantize: bool,
+    verbose: bool,
+    total_pages: u16,
+    layout: &OutputOptions,
+    pb: &ProgressBar,
+) -> Result<Vec<WrittenIfd>> {
+    let mut written = Vec::new();
+    let mut page = 0;
+    loop {
+        if verbose {
+            log::info!("Processing IFD {}", page);
+        }
+        pb.set_message(format!("Page {}/{}", page + 1, total_pages));
+        pb.set_position(((page as u64) * 100) / (total_pages.max(1) as u64));
+
+        process_single_ifd(
+            input,
+            tif_src,
+            tif_dst,
+            compression,
+            predictor,
+            level,
+            quantize,
+            page == 0,
+            verbose,
+            page,
+            total_pages,
+            layout,
+            &mut written,
+            pb,
+        )?;
+
+        if TIFFReadDirectory(tif_src) == 0 {
+            break;
+        }
+        page += 1;
+    }
+    Ok(written)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_compression_pass(
     input: &Path,
@@ -859,83 +1075,47 @@ fn run_compression_pass(
     quantize: bool,
     verbose: bool,
     total_pages: u16,
-    tile: &[u32],
-    overviews: &[u32],
+    layout: &OutputOptions,
     checksum: bool,
     pb: &ProgressBar,
-) -> Result<()> {
-    let c_input = CString::new(
-        input
-            .to_str()
-            .ok_or_else(|| anyhow!("Invalid input path"))?,
-    )?;
-
-    unsafe {
-        let tif_src = TIFFOpen(c_input.as_ptr(), CString::new("r")?.as_ptr());
-        if tif_src.is_null() {
-            return Err(anyhow!("Failed to open source TIFF"));
-        }
-
-        let tmp_path = output.with_extension("tmp_tiffreducer");
-        let c_tmp = CString::new(
-            tmp_path
-                .to_str()
-                .ok_or_else(|| anyhow!("Invalid temp path"))?,
-        )?;
-
-        let mode_str = if input.metadata()?.len() > 4 * 1024 * 1024 * 1024 {
-            "w8"
-        } else {
-            "w"
-        };
-        let tif_dst = TIFFOpen(c_tmp.as_ptr(), CString::new(mode_str)?.as_ptr());
-        if tif_dst.is_null() {
-            TIFFClose(tif_src);
-            return Err(anyhow!("Failed to open destination TIFF"));
-        }
-
-        // Register GeoTIFF tags on both handles
-        crate::metadata::register_geotiff_tags_ffi(tif_src);
-        crate::metadata::register_geotiff_tags_ffi(tif_dst);
-
-        let mut page = 0;
-        loop {
-            if verbose {
-                log::info!("Processing IFD {}", page);
-            }
-            pb.set_message(format!("Page {}/{}", page + 1, total_pages));
-            pb.set_position(((page as u64) * 100) / (total_pages as u64));
-
-            process_single_ifd(
+) -> Result<Option<Verification>> {
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create output directory {:?}", parent))?;
+    }
+    let tmp = TempOutput::new(output.with_extension("tmp_tiffreducer"));
+    let written = {
+        let src = TiffHandle::open(input, "r")?;
+        let dst = TiffHandle::open(&tmp.path, write_mode(input)?)?;
+        unsafe {
+            compress_pages(
                 input,
-                tif_src,
-                tif_dst,
+                src.ptr(),
+                dst.ptr(),
                 compression,
                 predictor,
                 level,
                 quantize,
-                page == 0,
                 verbose,
-                page,
                 total_pages,
-                tile,
-                overviews,
-                checksum,
+                layout,
                 pb,
-            )?;
-
-            if TIFFReadDirectory(tif_src) == 0 {
-                break;
-            }
-            page += 1;
+            )?
         }
+        // Both handles close here, flushing the output before it is re-read.
+    };
 
-        TIFFClose(tif_src);
-        TIFFClose(tif_dst);
+    let verification = if checksum {
+        pb.set_message("Verifying checksum");
+        let out = TiffHandle::open(&tmp.path, "r")?;
+        Some(unsafe { verify_output(input, out.ptr(), &written, compression)? })
+    } else {
+        None
+    };
 
-        fs::rename(tmp_path, output)?;
-    }
-    Ok(())
+    // Only now may the target (possibly the input itself) be replaced.
+    tmp.persist(output)?;
+    Ok(verification)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -948,86 +1128,41 @@ fn run_compression_to_fd(
     quantize: bool,
     verbose: bool,
     total_pages: u16,
-    tile: &[u32],
-    overviews: &[u32],
+    layout: &OutputOptions,
     checksum: bool,
     pb: &ProgressBar,
-) -> Result<u64> {
-    let c_input = CString::new(
-        input
-            .to_str()
-            .ok_or_else(|| anyhow!("Invalid input path"))?,
-    )?;
-
-    unsafe {
-        let tif_src = TIFFOpen(c_input.as_ptr(), CString::new("r")?.as_ptr());
-        if tif_src.is_null() {
-            return Err(anyhow!("Failed to open source TIFF"));
-        }
-
-        let mode_str = if input.metadata()?.len() > 4 * 1024 * 1024 * 1024 {
-            "w8"
-        } else {
-            "w"
-        };
-
-        // Use libc::dup to avoid ownership issues with TIFFFdOpen/TIFFClose
-        let fd = libc::dup(output_file.as_raw_fd());
-        let tif_dst = TIFFFdOpen(
-            fd,
-            CString::new("dry_run")?.as_ptr(),
-            CString::new(mode_str)?.as_ptr(),
-        );
-
-        if tif_dst.is_null() {
-            libc::close(fd);
-            TIFFClose(tif_src);
-            return Err(anyhow!("Failed to open destination TIFF (FD)"));
-        }
-
-        crate::metadata::register_geotiff_tags_ffi(tif_src);
-        crate::metadata::register_geotiff_tags_ffi(tif_dst);
-
-        let mut page = 0;
-        loop {
-            if verbose {
-                log::info!("Processing IFD {} (dry-run)", page);
-            }
-            pb.set_message(format!("Page {}/{} (dry-run)", page + 1, total_pages));
-            pb.set_position(((page as u64) * 100) / (total_pages as u64));
-
-            process_single_ifd(
+) -> Result<(u64, Option<Verification>)> {
+    let written = {
+        let src = TiffHandle::open(input, "r")?;
+        let dst = TiffHandle::from_file(&output_file, write_mode(input)?)?;
+        unsafe {
+            compress_pages(
                 input,
-                tif_src,
-                tif_dst,
+                src.ptr(),
+                dst.ptr(),
                 compression,
                 predictor,
                 level,
                 quantize,
-                page == 0,
                 verbose,
-                page,
                 total_pages,
-                tile,
-                overviews,
-                checksum,
+                layout,
                 pb,
-            )?;
-
-            if TIFFReadDirectory(tif_src) == 0 {
-                break;
-            }
-            page += 1;
+            )?
         }
+    };
 
-        TIFFClose(tif_src);
-        TIFFClose(tif_dst); // This will close the dup'd FD
+    let verification = if checksum {
+        let out = TiffHandle::from_file(&output_file, "r")?;
+        Some(unsafe { verify_output(input, out.ptr(), &written, compression)? })
+    } else {
+        None
+    };
 
-        use std::io::{Seek, SeekFrom};
-        let mut f = output_file;
-        let size = f.seek(SeekFrom::End(0))?;
-        Ok(size)
-    }
+    use std::io::{Seek, SeekFrom};
+    let mut f = output_file;
+    let size = f.seek(SeekFrom::End(0))?;
+    Ok((size, verification))
 }
 
 /// Process a single IFD (Image File Directory) / page
@@ -1044,11 +1179,23 @@ unsafe fn process_single_ifd(
     verbose: bool,
     page_index: u16,
     total_pages: u16,
-    tile: &[u32],
-    overviews: &[u32],
-    checksum: bool,
+    layout: &OutputOptions,
+    written: &mut Vec<WrittenIfd>,
     pb: &ProgressBar,
 ) -> Result<()> {
+    // Existing reduced-resolution IFDs are dropped when overviews are regenerated
+    let mut subfile_type: u32 = 0;
+    TIFFGetField(tif_src, TIFFTAG_SUBFILETYPE, &mut subfile_type);
+    if !layout.overviews.is_empty() && page_index > 0 && subfile_type & FILETYPE_REDUCEDIMAGE != 0 {
+        if verbose {
+            log::info!(
+                "Skipping existing overview IFD {} (overviews are regenerated)",
+                page_index
+            );
+        }
+        return Ok(());
+    }
+
     let mut w = 0u32;
     let mut h = 0u32;
     if TIFFGetField(tif_src, TIFFTAG_IMAGEWIDTH, &mut w) == 0
@@ -1115,19 +1262,7 @@ unsafe fn process_single_ifd(
         TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, planar as u32);
     }
 
-    // Configure tiled output if requested
-    let use_tiles = !tile.is_empty();
-    let (tile_width, tile_height) = if use_tiles {
-        let tw = tile.get(0).copied().unwrap_or(512);
-        let th = tile.get(1).copied().unwrap_or(512);
-        TIFFSetField(tif_dst, TIFFTAG_TILEWIDTH, tw);
-        TIFFSetField(tif_dst, TIFFTAG_TILELENGTH, th);
-        (tw, th)
-    } else {
-        // Force striped output even if source is tiled
-        TIFFSetField(tif_dst, TIFFTAG_ROWSPERSTRIP, h);
-        (0, 0)
-    };
+    set_output_layout(tif_dst, layout.tile, h);
 
     TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, compression as i32);
 
@@ -1146,32 +1281,7 @@ unsafe fn process_single_ifd(
 
     clone_metadata(tif_src, tif_dst)?;
 
-    // Set SUBFILETYPE for base image (full resolution) to support overviews
-    if !overviews.is_empty() && page_index == 0 {
-        TIFFSetField(tif_dst, TIFFTAG_SUBFILETYPE, 0u32); // FILETYPE_FULLRESIMAGE
-    }
-
-    if let Some(lvl) = level {
-        match compression {
-            COMPRESSION_LZMA => {
-                TIFFSetField(tif_dst, TIFFTAG_LZMAPRESET, lvl.clamp(1, 9) as i32);
-            }
-            COMPRESSION_ZSTD => {
-                let clamped: i32 = lvl.clamp(1, 22) as i32;
-                TIFFSetField(tif_dst, TIFFTAG_ZSTD_LEVEL, clamped);
-            }
-            COMPRESSION_JPEGXL | COMPRESSION_JPEG | COMPRESSION_WEBP => {
-                let tag = match compression {
-                    COMPRESSION_JPEGXL => TIFFTAG_DEFLATELEVEL,
-                    COMPRESSION_JPEG => TIFFTAG_JPEGQUALITY,
-                    COMPRESSION_WEBP => TIFFTAG_WEBP_LEVEL,
-                    _ => unreachable!(),
-                };
-                TIFFSetField(tif_dst, tag, lvl.clamp(1, 100) as i32);
-            }
-            _ => {}
-        }
-    }
+    apply_codec_level(tif_dst, compression, level);
 
     let final_predictor = if matches!(
         compression,
@@ -1209,6 +1319,48 @@ unsafe fn process_single_ifd(
         TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, final_predictor as u32);
     }
 
+    let target = ImageFormat {
+        bps: target_bps,
+        spp,
+        fmt: target_fmt,
+        photometric,
+        planar,
+        compression,
+        predictor: final_predictor,
+        level,
+    };
+
+    // Overviews of the first page are accumulated while its rows stream out
+    let overviews = if !layout.overviews.is_empty() && page_index == 0 {
+        let nodata = if quantize {
+            None // the source nodata value means nothing after quantization
+        } else {
+            crate::ffi::get_gdal_nodata(tif_src)
+        };
+        let builder = OverviewBuilder::new(w, h, &target, &layout.overviews, nodata);
+        if builder.is_none() {
+            log::warn!(
+                "{}: overviews are not supported for {}-bit samples (format {}); none written",
+                input_path.display(),
+                target_bps,
+                target_fmt
+            );
+        }
+        builder
+    } else {
+        None
+    };
+
+    let mut out = RowWriter::new(
+        tif_dst,
+        w,
+        h,
+        TIFFScanlineSize(tif_dst) as usize,
+        target.bits_per_pixel(),
+        layout.tile,
+        overviews,
+    );
+
     if is_tiled {
         if verbose {
             pb.println("Image is tiled, using parallel tiled processing path");
@@ -1216,7 +1368,6 @@ unsafe fn process_single_ifd(
         process_tiled_image(
             input_path,
             tif_src,
-            tif_dst,
             w,
             h,
             spp,
@@ -1227,9 +1378,7 @@ unsafe fn process_single_ifd(
             verbose,
             page_index,
             total_pages,
-            use_tiles,
-            tile_width,
-            tile_height,
+            &mut out,
             pb,
         )?;
     } else {
@@ -1237,58 +1386,31 @@ unsafe fn process_single_ifd(
             pb.println("Image is striped, using striped processing path");
         }
         process_striped_image(
-            tif_src, tif_dst, w, h, spp, bps, fmt, planar, quantize, verbose, use_tiles, tile_width, tile_height, pb,
+            tif_src, w, h, spp, bps, fmt, planar, quantize, verbose, &mut out, pb,
         )?;
     }
 
-    TIFFWriteDirectory(tif_dst);
+    if TIFFWriteDirectory(tif_dst) == 0 {
+        return Err(anyhow!("Failed to write directory for page {}", page_index));
+    }
+    let (digest, overviews) = out.finish();
+    written.push(WrittenIfd {
+        digest,
+        // Without quantization the output must match the decoded source page
+        source_page: (!quantize).then_some(page_index),
+    });
 
-    // Generate overviews if requested
-    if !overviews.is_empty() && page_index == 0 {
-        if verbose {
-            pb.println("Generating overviews...");
-        }
-        // Read the base image data from the source before generating overviews
-        let mut base_data = Vec::new();
-        let row_size = ((w as usize) * (bps as usize) * (spp as usize) + 7) / 8;
-        base_data.resize(row_size * (h as usize), 0);
-        
-        // Read from source TIFF (tif_src) which has the original data
-        for row in 0..h {
-            for s in 0..spp {
-                let sample = if planar == PLANARCONFIG_SEPARATE { s } else { 0 };
-                let offset = (row as usize) * row_size;
-                if TIFFReadScanline(tif_src, base_data[offset..].as_mut_ptr() as *mut _, row, sample) < 0 {
-                    return Err(anyhow!("Failed to read scanline {} for overview generation", row));
-                }
-            }
-        }
-        
-        generate_overviews(
+    if let Some(builder) = overviews {
+        write_overviews(
+            tif_src,
             tif_dst,
-            base_data,
-            w,
-            h,
-            spp,
-            bps,
-            fmt,
-            photometric,
-            planar,
-            compression,
-            final_predictor,
-            level,
-            &overviews,
+            builder,
+            &target,
+            layout.tile,
+            written,
             verbose,
             pb,
         )?;
-    }
-
-    // Verify checksum if requested
-    if checksum {
-        if verbose {
-            pb.println("Verifying checksum...");
-        }
-        verify_checksum(tif_src, tif_dst, w, h, spp, bps, fmt, planar, quantize, verbose, pb)?;
     }
 
     Ok(())
@@ -1345,7 +1467,6 @@ fn create_nodata_scanline(
 #[allow(clippy::too_many_arguments)]
 unsafe fn process_striped_image(
     tif_src: *mut TIFF,
-    tif_dst: *mut TIFF,
     w: u32,
     h: u32,
     spp: u16,
@@ -1354,9 +1475,7 @@ unsafe fn process_striped_image(
     planar: u16,
     quantize: bool,
     verbose: bool,
-    use_tiles: bool,
-    tile_width: u32,
-    tile_height: u32,
+    out: &mut RowWriter,
     pb: &ProgressBar,
 ) -> Result<()> {
     const MAX_SCANLINE_SIZE: usize = 1024 * 1024 * 1024;
@@ -1365,10 +1484,6 @@ unsafe fn process_striped_image(
     if in_scanline == 0 || in_scanline > MAX_SCANLINE_SIZE {
         return Err(anyhow!("Invalid scanline size: {}", in_scanline));
     }
-
-    // Get strip offsets and byte counts for sparse TIFF detection
-    let (strip_offsets, strip_byte_counts, strip_count) =
-        crate::ffi::get_strip_offsets_and_counts(tif_src);
 
     // Get GDAL nodata value for sparse strip filling
     let nodata = crate::ffi::get_gdal_nodata(tif_src).unwrap_or(0.0);
@@ -1393,13 +1508,6 @@ unsafe fn process_striped_image(
     let mut buf_in = vec![0u8; in_scanline];
     let mut buf_out = vec![0u8; out_row_size];
 
-    // Determine rows per strip to map row -> strip index
-    let mut rows_per_strip: u32 = 0;
-    TIFFGetField(tif_src, TIFFTAG_ROWSPERSTRIP, &mut rows_per_strip);
-    if rows_per_strip == 0 {
-        rows_per_strip = h; // Default to whole image
-    }
-
     // Pre-compute nodata bytes for the scanline
     let nodata_bytes = create_nodata_scanline(nodata, bps, fmt, w, spp, planar, &buf_in);
 
@@ -1419,16 +1527,8 @@ unsafe fn process_striped_image(
                 }
             }
 
-            // Calculate strip index for this row
-            let strip_index = row / rows_per_strip;
-
-            // Check if this strip is sparse (offset=0 && byte_count=0)
-            let is_sparse = !strip_offsets.is_null()
-                && !strip_byte_counts.is_null()
-                && strip_index < strip_count
-                && crate::ffi::is_strip_sparse(strip_offsets, strip_byte_counts, strip_index);
-
-            if is_sparse {
+            // Sparse strips (no data written by GDAL) read as nodata
+            if crate::ffi::is_strile_sparse(tif_src, TIFFComputeStrip(tif_src, row, s)) {
                 // Fill buffer with nodata value
                 buf_in.copy_from_slice(&nodata_bytes);
             } else if TIFFReadScanline(tif_src, buf_in.as_mut_ptr() as *mut _, row, s) < 0 {
@@ -1470,23 +1570,12 @@ unsafe fn process_striped_image(
                     let take = buf_in.len().min(buf_out.len());
                     buf_out[..take].copy_from_slice(&buf_in[..take]);
                 }
-                if use_tiles {
-                    TIFFWriteTile(tif_dst, buf_out.as_ptr() as *mut _, (row * spp as u32) % tile_width, row, 0, s);
-                } else {
-                    TIFFWriteScanline(tif_dst, buf_out.as_ptr() as *mut _, row, s);
-                }
+                out.write_row(row, s, &buf_out)?;
             } else {
-                if use_tiles {
-                    TIFFWriteTile(tif_dst, buf_in.as_ptr() as *mut _, (row * spp as u32) % tile_width, row, 0, s);
-                } else {
-                    TIFFWriteScanline(tif_dst, buf_in.as_ptr() as *mut _, row, s);
-                }
+                out.write_row(row, s, &buf_in)?;
             }
         }
     }
-
-    // Free the sparse detection arrays
-    crate::ffi::free_offsets_and_counts(strip_offsets, strip_byte_counts);
 
     Ok(())
 }
@@ -1495,7 +1584,6 @@ unsafe fn process_striped_image(
 unsafe fn process_tiled_image(
     input_path: &Path, // Need path to open more handles
     tif_src: *mut TIFF,
-    tif_dst: *mut TIFF,
     w: u32,
     h: u32,
     spp: u16,
@@ -1506,9 +1594,7 @@ unsafe fn process_tiled_image(
     verbose: bool,
     page_index: u16,
     total_pages: u16,
-    use_tiles: bool,
-    tile_width: u32,
-    tile_height: u32,
+    out: &mut RowWriter,
     pb: &ProgressBar,
 ) -> Result<()> {
     const MAX_SCANLINE_SIZE: usize = 1024 * 1024 * 1024;
@@ -1567,11 +1653,17 @@ unsafe fn process_tiled_image(
     let tile_row_size = (tile_width as usize * bits_per_pixel).div_ceil(8);
     let tile_buffer_size = tile_row_size * (tile_length as usize);
 
-    // Use a thread-local TIFF handle for parallel decompression
-    let c_path = CString::new(input_path.to_str().unwrap())?;
-    thread_local! {
-        static SOURCE_HANDLES: std::cell::RefCell<Option<*mut TIFF>> = const { std::cell::RefCell::new(None) };
-    }
+    // Worker threads decode with their own handles on this file and page
+    let c_path = CString::new(
+        input_path
+            .to_str()
+            .ok_or_else(|| anyhow!("Invalid input path"))?,
+    )?;
+
+    // Sparse tiles (no data written by GDAL) read as nodata, like sparse strips
+    let nodata = crate::ffi::get_gdal_nodata(tif_src).unwrap_or(0.0);
+    let nodata_row =
+        create_nodata_scanline(nodata, bps, fmt, w, spp, planar, &vec![0u8; in_row_size]);
 
     let num_samples = if planar == PLANARCONFIG_SEPARATE {
         spp
@@ -1610,45 +1702,43 @@ unsafe fn process_tiled_image(
             image_strip.fill(0);
 
             // Prepare tile metadata for parallel decoding
-            let tile_indices: Vec<(u32, u32)> = (0..geom.tiles_across)
+            let tile_indices: Vec<(u32, u32, bool)> = (0..geom.tiles_across)
                 .map(|tile_x| {
                     let tile_index =
                         geom.tile_index(tile_x, tile_y, s as u32, planar == PLANARCONFIG_SEPARATE);
-                    (tile_x, tile_index)
+                    let sparse = crate::ffi::is_strile_sparse(tif_src, tile_index);
+                    (tile_x, tile_index, sparse)
                 })
                 .collect();
 
-            // Parallel decode tiles
-            let decoded_tiles: Vec<(u32, Vec<u8>)> = tile_indices
+            // Parallel decode tiles (`None` = sparse tile)
+            let decoded_tiles: Vec<(u32, Option<Vec<u8>>)> = tile_indices
                 .par_iter()
-                .map(|&(tile_x, tile_index)| {
-                    let mut buf = vec![0u8; tile_buffer_size];
-                    SOURCE_HANDLES.with(|cell| {
-                        let mut cell = cell.borrow_mut();
-                        if cell.is_none() {
-                            let tif = unsafe {
-                                TIFFOpen(c_path.as_ptr(), CString::new("r").unwrap().as_ptr())
-                            };
-                            // We must re-register tags for every handle
-                            unsafe { crate::metadata::register_geotiff_tags_ffi(tif) };
-                            *cell = Some(tif);
+                .map(
+                    |&(tile_x, tile_index, sparse)| -> Result<(u32, Option<Vec<u8>>)> {
+                        if sparse {
+                            return Ok((tile_x, None));
                         }
-                        let tif = cell.unwrap();
-                        unsafe {
-                            if crate::ffi::TIFFReadEncodedTile(
+                        let mut buf = vec![0u8; tile_buffer_size];
+                        let read = with_worker_handle(&c_path, page_index, |tif| unsafe {
+                            crate::ffi::TIFFReadEncodedTile(
                                 tif,
                                 tile_index,
                                 buf.as_mut_ptr() as *mut _,
-                                tile_buffer_size as u32,
-                            ) < 0
-                            {
-                                // Should ideally return an error, but par_iter map needs a return
-                            }
+                                tile_buffer_size as isize,
+                            )
+                        })?;
+                        if read < 0 {
+                            return Err(anyhow!(
+                                "Failed to decode tile {} of page {}",
+                                tile_index,
+                                page_index
+                            ));
                         }
-                    });
-                    (tile_x, buf)
-                })
-                .collect();
+                        Ok((tile_x, Some(buf)))
+                    },
+                )
+                .collect::<Result<_>>()?;
 
             // Assembly (Sequential)
             for (tile_x, tile_buf) in decoded_tiles {
@@ -1661,12 +1751,15 @@ unsafe fn process_tiled_image(
 
                 // Byte-aligned because the guard above ensures tile rows (and
                 // hence every tile's start column) fall on byte boundaries.
+                let col_start = (start_x * bits_per_pixel) / 8;
+                let copy_len = (actual_width * bits_per_pixel).div_ceil(8);
                 for row in 0..actual_height {
-                    let src_start = row * tile_row_size;
-                    let dst_start = row * in_row_size + (start_x * bits_per_pixel) / 8;
-                    let copy_len = (actual_width * bits_per_pixel).div_ceil(8);
-                    image_strip[dst_start..dst_start + copy_len]
-                        .copy_from_slice(&tile_buf[src_start..src_start + copy_len]);
+                    let src = match &tile_buf {
+                        Some(buf) => &buf[row * tile_row_size..][..copy_len],
+                        None => &nodata_row[col_start..][..copy_len],
+                    };
+                    let dst_start = row * in_row_size + col_start;
+                    image_strip[dst_start..dst_start + copy_len].copy_from_slice(src);
                 }
             }
 
@@ -1735,23 +1828,14 @@ unsafe fn process_tiled_image(
             for (row_idx, out_buf) in processed_rows.iter().enumerate().take(rows_in_strip) {
                 let global_row = tile_y * tile_length + row_idx as u32;
                 if quantize {
-                    if use_tiles {
-                        // Write as tiles
-                        let tile_x = 0; // We write row by row, so calculate tile position
-                        // Actually, for tiled output we should write whole tiles
-                        // For simplicity, write scanlines which libtiff will pack into tiles
-                        TIFFWriteScanline(tif_dst, out_buf.as_ptr() as *mut _, global_row, s);
-                    } else {
-                        TIFFWriteScanline(tif_dst, out_buf.as_ptr() as *mut _, global_row, s);
-                    }
+                    out.write_row(global_row, s, out_buf)?;
                 } else {
                     let row_start = row_idx * in_row_size;
-                    let row_slice = &image_strip[row_start..row_start + in_row_size];
-                    if use_tiles {
-                        TIFFWriteScanline(tif_dst, row_slice.as_ptr() as *mut _, global_row, s);
-                    } else {
-                        TIFFWriteScanline(tif_dst, row_slice.as_ptr() as *mut _, global_row, s);
-                    }
+                    out.write_row(
+                        global_row,
+                        s,
+                        &image_strip[row_start..row_start + in_row_size],
+                    )?;
                 }
             }
         }
@@ -1759,284 +1843,663 @@ unsafe fn process_tiled_image(
     Ok(())
 }
 
-/// Generate overview (pyramid) levels for a TIFF image
-unsafe fn generate_overviews(
-    tif: *mut TIFF,
-    base_data: Vec<u8>,
-    base_width: u32,
-    base_height: u32,
-    spp: u16,
+/// Pixel and codec settings of an output IFD.
+#[derive(Clone, Copy)]
+struct ImageFormat {
     bps: u16,
+    spp: u16,
     fmt: u16,
     photometric: u16,
     planar: u16,
     compression: u16,
     predictor: u16,
     level: Option<u32>,
-    overview_levels: &[u32],
+}
+
+impl ImageFormat {
+    /// Samples per pixel within one row: all of them when contiguous, one per plane otherwise.
+    fn row_spp(&self) -> usize {
+        if self.planar == PLANARCONFIG_SEPARATE {
+            1
+        } else {
+            self.spp as usize
+        }
+    }
+
+    fn planes(&self) -> u16 {
+        if self.planar == PLANARCONFIG_SEPARATE {
+            self.spp
+        } else {
+            1
+        }
+    }
+
+    fn bits_per_pixel(&self) -> usize {
+        self.bps as usize * self.row_spp()
+    }
+}
+
+/// Set the codec quality/level tag for `compression` (the predictor is set separately).
+unsafe fn apply_codec_level(tif: *mut TIFF, compression: u16, level: Option<u32>) {
+    if let Some(lvl) = level {
+        match compression {
+            COMPRESSION_LZMA => {
+                TIFFSetField(tif, TIFFTAG_LZMAPRESET, lvl.clamp(1, 9) as i32);
+            }
+            COMPRESSION_ZSTD => {
+                let clamped: i32 = lvl.clamp(1, 22) as i32;
+                TIFFSetField(tif, TIFFTAG_ZSTD_LEVEL, clamped);
+            }
+            COMPRESSION_JPEGXL | COMPRESSION_JPEG | COMPRESSION_WEBP => {
+                let tag = match compression {
+                    COMPRESSION_JPEGXL => TIFFTAG_DEFLATELEVEL,
+                    COMPRESSION_JPEG => TIFFTAG_JPEGQUALITY,
+                    COMPRESSION_WEBP => TIFFTAG_WEBP_LEVEL,
+                    _ => unreachable!(),
+                };
+                TIFFSetField(tif, tag, lvl.clamp(1, 100) as i32);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Configure tiles of the given size, or a single strip of `h` rows (striped
+/// output even if the source is tiled).
+unsafe fn set_output_layout(tif: *mut TIFF, tile: Option<(u32, u32)>, h: u32) {
+    match tile {
+        Some((tw, th)) => {
+            TIFFSetField(tif, TIFFTAG_TILEWIDTH, tw);
+            TIFFSetField(tif, TIFFTAG_TILELENGTH, th);
+        }
+        None => {
+            TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, h);
+        }
+    }
+}
+
+/// Destination for the decoded rows of one output IFD, fed in order (plane by
+/// plane for separate planar data). Writes scanlines, or collects a band of
+/// rows and cuts it into tiles. Every row is also fingerprinted for
+/// `--checksum` and handed to the overview builder, if any.
+struct RowWriter {
+    tif: *mut TIFF,
+    w: u32,
+    h: u32,
+    row_bytes: usize,
+    bits_per_pixel: usize,
+    tiles: Option<TileBand>,
+    hasher: DefaultHasher,
+    overviews: Option<OverviewBuilder>,
+}
+
+/// Rows buffered until a full row of tiles can be written.
+struct TileBand {
+    width: u32,
+    height: u32,
+    /// Bytes per tile row
+    row_bytes: usize,
+    /// `height` image rows
+    band: Vec<u8>,
+    tile: Vec<u8>,
+}
+
+impl RowWriter {
+    fn new(
+        tif: *mut TIFF,
+        w: u32,
+        h: u32,
+        row_bytes: usize,
+        bits_per_pixel: usize,
+        tile: Option<(u32, u32)>,
+        overviews: Option<OverviewBuilder>,
+    ) -> Self {
+        let tiles = tile.map(|(width, height)| {
+            let tile_row_bytes = (width as usize * bits_per_pixel).div_ceil(8);
+            TileBand {
+                width,
+                height,
+                row_bytes: tile_row_bytes,
+                band: vec![0; row_bytes * height as usize],
+                tile: vec![0; tile_row_bytes * height as usize],
+            }
+        });
+        RowWriter {
+            tif,
+            w,
+            h,
+            row_bytes,
+            bits_per_pixel,
+            tiles,
+            hasher: DefaultHasher::new(),
+            overviews,
+        }
+    }
+
+    unsafe fn write_row(&mut self, row: u32, sample: u16, data: &[u8]) -> Result<()> {
+        let data = data.get(..self.row_bytes).ok_or_else(|| {
+            anyhow!(
+                "Row {} is shorter than a scanline ({} < {} bytes)",
+                row,
+                data.len(),
+                self.row_bytes
+            )
+        })?;
+        self.hasher.write(data);
+        if let Some(overviews) = &mut self.overviews {
+            overviews.push_row(sample, row, data);
+        }
+
+        let Some(t) = &mut self.tiles else {
+            if TIFFWriteScanline(self.tif, data.as_ptr() as *mut _, row, sample) < 0 {
+                return Err(anyhow!(
+                    "Failed to write scanline {} (sample {})",
+                    row,
+                    sample
+                ));
+            }
+            return Ok(());
+        };
+
+        let band_row = (row % t.height) as usize;
+        t.band[band_row * self.row_bytes..][..self.row_bytes].copy_from_slice(data);
+        if band_row + 1 < t.height as usize && row + 1 < self.h {
+            return Ok(());
+        }
+
+        // Band complete: cut it into tiles, zero-padded past the image edges
+        let y = row - band_row as u32;
+        for x in (0..self.w).step_by(t.width as usize) {
+            // Tile widths are multiples of 16, so every tile starts on a byte
+            let start = x as usize * self.bits_per_pixel / 8;
+            let len = t.row_bytes.min(self.row_bytes - start);
+            t.tile.fill(0);
+            for r in 0..=band_row {
+                t.tile[r * t.row_bytes..][..len]
+                    .copy_from_slice(&t.band[r * self.row_bytes + start..][..len]);
+            }
+            if TIFFWriteTile(self.tif, t.tile.as_mut_ptr() as *mut _, x, y, 0, sample) < 0 {
+                return Err(anyhow!(
+                    "Failed to write tile at ({}, {}) (sample {})",
+                    x,
+                    y,
+                    sample
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Fingerprint of every row written, and the overview builder if any.
+    fn finish(self) -> (u64, Option<OverviewBuilder>) {
+        (self.hasher.finish(), self.overviews)
+    }
+}
+
+/// Sample types overviews can be computed for.
+#[derive(Clone, Copy)]
+enum SampleKind {
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    F32,
+    F64,
+}
+
+impl SampleKind {
+    fn new(bps: u16, fmt: u16) -> Option<Self> {
+        let uint = fmt == SAMPLEFORMAT_UINT || fmt == 0;
+        let int = fmt == SAMPLEFORMAT_INT;
+        let float = fmt == SAMPLEFORMAT_IEEEFP;
+        Some(match bps {
+            8 if uint => Self::U8,
+            8 if int => Self::I8,
+            16 if uint => Self::U16,
+            16 if int => Self::I16,
+            32 if uint => Self::U32,
+            32 if int => Self::I32,
+            32 if float => Self::F32,
+            64 if float => Self::F64,
+            _ => return None,
+        })
+    }
+
+    fn size(self) -> usize {
+        match self {
+            Self::U8 | Self::I8 => 1,
+            Self::U16 | Self::I16 => 2,
+            Self::U32 | Self::I32 | Self::F32 => 4,
+            Self::F64 => 8,
+        }
+    }
+
+    /// Sample `i` of a native-endian row.
+    fn get(self, b: &[u8], i: usize) -> f64 {
+        fn bytes<const N: usize>(b: &[u8], i: usize) -> [u8; N] {
+            b[i * N..(i + 1) * N].try_into().unwrap()
+        }
+        match self {
+            Self::U8 => b[i] as f64,
+            Self::I8 => b[i] as i8 as f64,
+            Self::U16 => u16::from_ne_bytes(bytes(b, i)) as f64,
+            Self::I16 => i16::from_ne_bytes(bytes(b, i)) as f64,
+            Self::U32 => u32::from_ne_bytes(bytes(b, i)) as f64,
+            Self::I32 => i32::from_ne_bytes(bytes(b, i)) as f64,
+            Self::F32 => f32::from_ne_bytes(bytes(b, i)) as f64,
+            Self::F64 => f64::from_ne_bytes(bytes(b, i)),
+        }
+    }
+
+    /// Store `v` as sample `i`, rounded and saturated for integer types.
+    fn put(self, b: &mut [u8], i: usize, v: f64) {
+        let size = self.size();
+        let dst = &mut b[i * size..(i + 1) * size];
+        match self {
+            Self::U8 => dst[0] = v.round() as u8,
+            Self::I8 => dst[0] = v.round() as i8 as u8,
+            Self::U16 => dst.copy_from_slice(&(v.round() as u16).to_ne_bytes()),
+            Self::I16 => dst.copy_from_slice(&(v.round() as i16).to_ne_bytes()),
+            Self::U32 => dst.copy_from_slice(&(v.round() as u32).to_ne_bytes()),
+            Self::I32 => dst.copy_from_slice(&(v.round() as i32).to_ne_bytes()),
+            Self::F32 => dst.copy_from_slice(&(v as f32).to_ne_bytes()),
+            Self::F64 => dst.copy_from_slice(&v.to_ne_bytes()),
+        }
+    }
+}
+
+/// One reduced-resolution image being accumulated.
+struct OverviewLevel {
+    factor: u32,
+    w: u32,
+    h: u32,
+    /// Finished rows: one block of `h` rows per plane
+    data: Vec<u8>,
+    /// Per-sample sums and counts of the output row in progress
+    sums: Vec<f64>,
+    counts: Vec<u32>,
+}
+
+/// Builds overviews from full-resolution rows as they stream past, GDAL
+/// AVERAGE-style: each output sample is the mean of its factor x factor block,
+/// ignoring NaN and nodata samples. Palette images use the block's top-left
+/// sample instead, since averaging indices is meaningless.
+struct OverviewBuilder {
+    w: u32,
+    h: u32,
+    row_spp: usize,
+    kind: SampleKind,
+    nearest: bool,
+    nodata: Option<f64>,
+    levels: Vec<OverviewLevel>,
+}
+
+impl OverviewBuilder {
+    /// `None` if the sample type is not supported (sub-byte, 24-bit, 64-bit integers).
+    fn new(
+        w: u32,
+        h: u32,
+        format: &ImageFormat,
+        factors: &[u32],
+        nodata: Option<f64>,
+    ) -> Option<Self> {
+        let kind = SampleKind::new(format.bps, format.fmt)?;
+        let row_spp = format.row_spp();
+        let levels = factors
+            .iter()
+            .map(|&factor| {
+                let (ow, oh) = (w.div_ceil(factor), h.div_ceil(factor));
+                let n = ow as usize * row_spp;
+                OverviewLevel {
+                    factor,
+                    w: ow,
+                    h: oh,
+                    data: vec![0; n * kind.size() * oh as usize * format.planes() as usize],
+                    sums: vec![0.0; n],
+                    counts: vec![0; n],
+                }
+            })
+            .collect();
+        Some(OverviewBuilder {
+            w,
+            h,
+            row_spp,
+            kind,
+            nearest: format.photometric == PHOTOMETRIC_PALETTE,
+            nodata,
+            levels,
+        })
+    }
+
+    fn push_row(&mut self, plane: u16, row: u32, data: &[u8]) {
+        let (kind, n) = (self.kind, self.row_spp);
+        let px = n * kind.size();
+        for lvl in &mut self.levels {
+            let f = lvl.factor as usize;
+            let row_bytes = lvl.w as usize * px;
+            let out_row = plane as usize * lvl.h as usize + (row / lvl.factor) as usize;
+            let dst = &mut lvl.data[out_row * row_bytes..][..row_bytes];
+
+            if self.nearest {
+                if row.is_multiple_of(lvl.factor) {
+                    for ox in 0..lvl.w as usize {
+                        dst[ox * px..][..px].copy_from_slice(&data[ox * f * px..][..px]);
+                    }
+                }
+                continue;
+            }
+
+            for x in 0..self.w as usize {
+                let ox = x / f;
+                for c in 0..n {
+                    let v = kind.get(data, x * n + c);
+                    if v.is_nan() || self.nodata == Some(v) {
+                        continue;
+                    }
+                    lvl.sums[ox * n + c] += v;
+                    lvl.counts[ox * n + c] += 1;
+                }
+            }
+
+            if (row + 1).is_multiple_of(lvl.factor) || row + 1 == self.h {
+                // Blocks without a valid sample become nodata (NaN if there is none)
+                let empty = self.nodata.unwrap_or(f64::NAN);
+                for (k, (sum, count)) in lvl.sums.iter_mut().zip(&mut lvl.counts).enumerate() {
+                    let v = if *count > 0 {
+                        *sum / *count as f64
+                    } else {
+                        empty
+                    };
+                    kind.put(dst, k, v);
+                    *sum = 0.0;
+                    *count = 0;
+                }
+            }
+        }
+    }
+}
+
+/// Write the accumulated overviews as reduced-resolution IFDs following the
+/// base image, with its pixel format, codec and layout.
+#[allow(clippy::too_many_arguments)]
+unsafe fn write_overviews(
+    tif_src: *mut TIFF,
+    tif_dst: *mut TIFF,
+    builder: OverviewBuilder,
+    format: &ImageFormat,
+    tile: Option<(u32, u32)>,
+    written: &mut Vec<WrittenIfd>,
     verbose: bool,
     pb: &ProgressBar,
 ) -> Result<()> {
-    let row_size = ((base_width as usize) * (bps as usize) * (spp as usize) + 7) / 8;
-
-    // Generate each overview level
-    for &ovr_level in overview_levels.iter() {
-        if ovr_level < 2 {
-            continue; // Skip invalid levels
-        }
-
-        let ovr_width = base_width.div_ceil(ovr_level);
-        let ovr_height = base_height.div_ceil(ovr_level);
-
+    for lvl in &builder.levels {
         if verbose {
             pb.println(format!(
-                "Generating overview level {}: {}x{}",
-                ovr_level, ovr_width, ovr_height
+                "Writing overview 1/{}: {}x{}",
+                lvl.factor, lvl.w, lvl.h
             ));
         }
-
-        // Create a new subdirectory (IFD) for the overview
-        let result = TIFFCreateDirectory(tif);
-        if result == 0 {
-            // TIFFCreateDirectory failed - try alternative approach
-            // For now, skip overview generation and warn
-            if verbose {
-                pb.println(format!("Warning: Failed to create overview directory for level {}, skipping", ovr_level));
-            }
-            continue;
+        TIFFSetField(tif_dst, TIFFTAG_SUBFILETYPE, FILETYPE_REDUCEDIMAGE);
+        TIFFSetField(tif_dst, TIFFTAG_IMAGEWIDTH, lvl.w);
+        TIFFSetField(tif_dst, TIFFTAG_IMAGELENGTH, lvl.h);
+        TIFFSetField(tif_dst, TIFFTAG_BITSPERSAMPLE, format.bps as u32);
+        TIFFSetField(tif_dst, TIFFTAG_SAMPLESPERPIXEL, format.spp as u32);
+        if format.fmt != 0 {
+            TIFFSetField(tif_dst, TIFFTAG_SAMPLEFORMAT, format.fmt as u32);
+        }
+        TIFFSetField(tif_dst, TIFFTAG_PHOTOMETRIC, format.photometric as u32);
+        if format.spp > 1 {
+            TIFFSetField(tif_dst, TIFFTAG_PLANARCONFIG, format.planar as u32);
+        }
+        crate::metadata::copy_extrasamples(tif_src, tif_dst)?;
+        match format.photometric {
+            PHOTOMETRIC_PALETTE => crate::metadata::copy_colormap(tif_src, tif_dst)?,
+            PHOTOMETRIC_YCBCR => crate::metadata::copy_ycbcr_tags(tif_src, tif_dst)?,
+            _ => {}
+        }
+        set_output_layout(tif_dst, tile, lvl.h);
+        TIFFSetField(tif_dst, TIFFTAG_COMPRESSION, format.compression as i32);
+        apply_codec_level(tif_dst, format.compression, format.level);
+        if format.predictor != PREDICTOR_NONE {
+            TIFFSetField(tif_dst, TIFFTAG_PREDICTOR, format.predictor as u32);
         }
 
-        // Set overview dimensions
-        TIFFSetField(tif, TIFFTAG_SUBFILETYPE, FILETYPE_REDUCEDIMAGE as u32);
-        TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, ovr_width);
-        TIFFSetField(tif, TIFFTAG_IMAGELENGTH, ovr_height);
-        TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, bps as u32);
-        TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, spp as u32);
-        TIFFSetField(tif, TIFFTAG_SAMPLEFORMAT, fmt as u32);
-        TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, photometric as u32);
-        if planar != 0 && spp > 1 {
-            TIFFSetField(tif, TIFFTAG_PLANARCONFIG, planar as u32);
-        }
-
-        // Use same tile size as base image if tiled
-        let mut base_tile_w: u32 = 0;
-        let mut base_tile_h: u32 = 0;
-        TIFFGetField(tif, TIFFTAG_TILEWIDTH, &mut base_tile_w);
-        TIFFGetField(tif, TIFFTAG_TILELENGTH, &mut base_tile_h);
-        if base_tile_w > 0 && base_tile_h > 0 {
-            let ovr_tile_w = base_tile_w.min(ovr_width);
-            let ovr_tile_h = base_tile_h.min(ovr_height);
-            TIFFSetField(tif, TIFFTAG_TILEWIDTH, ovr_tile_w);
-            TIFFSetField(tif, TIFFTAG_TILELENGTH, ovr_tile_h);
-        } else {
-            TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, ovr_height);
-        }
-
-        TIFFSetField(tif, TIFFTAG_COMPRESSION, compression as i32);
-
-        if predictor != PREDICTOR_NONE {
-            TIFFSetField(tif, TIFFTAG_PREDICTOR, predictor as u32);
-        }
-
-        if let Some(lvl) = level {
-            match compression {
-                COMPRESSION_LZMA => {
-                    TIFFSetField(tif, TIFFTAG_LZMAPRESET, lvl.clamp(1, 9) as i32);
-                }
-                COMPRESSION_ZSTD => {
-                    let clamped: i32 = lvl.clamp(1, 22) as i32;
-                    TIFFSetField(tif, TIFFTAG_ZSTD_LEVEL, clamped);
-                }
-                COMPRESSION_JPEGXL | COMPRESSION_JPEG | COMPRESSION_WEBP => {
-                    let tag = match compression {
-                        COMPRESSION_JPEGXL => TIFFTAG_DEFLATELEVEL,
-                        COMPRESSION_JPEG => TIFFTAG_JPEGQUALITY,
-                        COMPRESSION_WEBP => TIFFTAG_WEBP_LEVEL,
-                        _ => unreachable!(),
-                    };
-                    TIFFSetField(tif, tag, lvl.clamp(1, 100) as i32);
-                }
-                _ => {}
+        let row_bytes = lvl.w as usize * builder.row_spp * builder.kind.size();
+        let mut out = RowWriter::new(
+            tif_dst,
+            lvl.w,
+            lvl.h,
+            row_bytes,
+            format.bits_per_pixel(),
+            tile,
+            None,
+        );
+        for (plane, rows) in lvl
+            .data
+            .chunks_exact(row_bytes * lvl.h as usize)
+            .enumerate()
+        {
+            for (row, data) in rows.chunks_exact(row_bytes).enumerate() {
+                out.write_row(row as u32, plane as u16, data)?;
             }
         }
-
-        // Simple nearest-neighbor downsampling for overview generation
-        let ovr_row_size = ((ovr_width as usize) * (bps as usize) * (spp as usize) + 7) / 8;
-        let mut ovr_data = vec![0u8; ovr_row_size * (ovr_height as usize)];
-
-        for row in 0..ovr_height {
-            for s in 0..spp {
-                let sample = if planar == PLANARCONFIG_SEPARATE { s } else { 0 };
-                let src_row = row * ovr_level;
-                let src_offset = (src_row as usize) * row_size;
-                let dst_offset = (row as usize) * ovr_row_size;
-
-                // Simple subsampling - take every ovr_level pixel
-                if bps == 8 && fmt == SAMPLEFORMAT_UINT {
-                    let src = &base_data[src_offset..src_offset + (base_width as usize) * (spp as usize)];
-                    let dst = &mut ovr_data[dst_offset..dst_offset + (ovr_width as usize) * (spp as usize)];
-                    for x in 0..ovr_width {
-                        let src_idx = ((x * ovr_level) as usize) * (spp as usize) + (s as usize);
-                        let dst_idx = (x as usize) * (spp as usize) + (s as usize);
-                        if src_idx < src.len() && dst_idx < dst.len() {
-                            dst[dst_idx] = src[src_idx];
-                        }
-                    }
-                } else if bps == 16 && fmt == SAMPLEFORMAT_UINT {
-                    let src = unsafe {
-                        std::slice::from_raw_parts(
-                            base_data[src_offset..].as_ptr() as *const u16,
-                            (base_width as usize) * (spp as usize),
-                        )
-                    };
-                    let dst = unsafe {
-                        std::slice::from_raw_parts_mut(
-                            ovr_data[dst_offset..].as_mut_ptr() as *mut u16,
-                            (ovr_width as usize) * (spp as usize),
-                        )
-                    };
-                    for x in 0..ovr_width {
-                        let src_idx = ((x * ovr_level) as usize) * (spp as usize) + (s as usize);
-                        let dst_idx = (x as usize) * (spp as usize) + (s as usize);
-                        if src_idx < src.len() && dst_idx < dst.len() {
-                            dst[dst_idx] = src[src_idx];
-                        }
-                    }
-                }
-
-                if TIFFWriteScanline(tif, ovr_data[dst_offset..].as_ptr() as *mut _, row, sample) < 0 {
-                    return Err(anyhow!("Failed to write overview scanline {}", row));
-                }
-            }
+        if TIFFWriteDirectory(tif_dst) == 0 {
+            return Err(anyhow!(
+                "Failed to write overview directory (factor {})",
+                lvl.factor
+            ));
         }
-
-        TIFFWriteDirectory(tif);
+        written.push(WrittenIfd {
+            digest: out.finish().0,
+            source_page: None,
+        });
     }
-
     Ok(())
 }
 
-/// Verify checksum of pixel data between source and destination
-unsafe fn verify_checksum(
-    tif_src: *mut TIFF,
-    tif_dst: *mut TIFF,
-    w: u32,
-    h: u32,
-    spp: u16,
-    bps: u16,
-    fmt: u16,
-    planar: u16,
-    quantize: bool,
-    verbose: bool,
-    _pb: &ProgressBar,
-) -> Result<()> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+/// What was encoded into one output IFD, for `--checksum`.
+struct WrittenIfd {
+    /// Fingerprint of the rows handed to libtiff
+    digest: u64,
+    /// Source page this IFD must decode identically to (none for overviews
+    /// and quantized pages)
+    source_page: Option<u16>,
+}
 
-    // Check if source is tiled
-    let src_is_tiled = TIFFIsTiled(tif_src) != 0;
-    let dst_is_tiled = TIFFIsTiled(tif_dst) != 0;
+/// Outcome of `--checksum`.
+#[derive(Clone, Copy, Debug)]
+enum Verification {
+    /// Every IFD decodes to exactly the expected pixels.
+    Exact,
+    /// Lossy codec: every IFD decodes, pixel values are not compared.
+    DecodedOnly,
+}
 
-    // Compute hash of source image
-    let mut src_hasher = DefaultHasher::new();
-    let row_size = ((w as usize) * (bps as usize) * (spp as usize) + 7) / 8;
-    let mut row_buf = vec![0u8; row_size];
-
-    if src_is_tiled {
-        // Read source as tiles
-        let mut tile_w: u32 = 0;
-        let mut tile_h: u32 = 0;
-        TIFFGetField(tif_src, TIFFTAG_TILEWIDTH, &mut tile_w);
-        TIFFGetField(tif_src, TIFFTAG_TILELENGTH, &mut tile_h);
-        let tiles_across = w.div_ceil(tile_w);
-        let tiles_down = h.div_ceil(tile_h);
-        let tile_size = TIFFTileSize(tif_src) as usize;
-        let mut tile_buf = vec![0u8; tile_size];
-
-        for tile_y in 0..tiles_down {
-            for tile_x in 0..tiles_across {
-                for s in 0..spp {
-                    let sample = if planar == PLANARCONFIG_SEPARATE { s } else { 0 };
-                    if TIFFReadTile(tif_src, tile_x * tile_w, tile_y * tile_h, 0, sample, tile_buf.as_mut_ptr() as *mut _, tile_size as u32) < 0 {
-                        return Err(anyhow!("Failed to read source tile ({},{}) for checksum", tile_x, tile_y));
-                    }
-                    tile_buf.hash(&mut src_hasher);
-                }
-            }
-        }
-    } else {
-        // Read source as scanlines
-        for row in 0..h {
-            for s in 0..spp {
-                let sample = if planar == PLANARCONFIG_SEPARATE { s } else { 0 };
-                if TIFFReadScanline(tif_src, row_buf.as_mut_ptr() as *mut _, row, sample) < 0 {
-                    return Err(anyhow!("Failed to read source scanline {} for checksum", row));
-                }
-                row_buf.hash(&mut src_hasher);
+impl std::fmt::Display for Verification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Verification::Exact => write!(f, "checksum OK"),
+            Verification::DecodedOnly => {
+                write!(f, "checksum: decodes OK, pixels not compared (lossy)")
             }
         }
     }
-    let src_hash = src_hasher.finish();
+}
 
-    // Compute hash of destination image
-    // Set directory to 0 (base image) before reading
-    TIFFSetDirectory(tif_dst, 0);
-    
-    // Check if destination is tiled AFTER setting directory
-    let dst_is_tiled = TIFFIsTiled(tif_dst) != 0;
-    let mut dst_hasher = DefaultHasher::new();
-    let (target_bps, target_fmt) = if quantize {
-        (8u16, SAMPLEFORMAT_UINT)
+fn is_lossless(compression: u16) -> bool {
+    matches!(
+        compression,
+        COMPRESSION_NONE
+            | COMPRESSION_LZW
+            | COMPRESSION_ADOBE_DEFLATE
+            | COMPRESSION_DEFLATE
+            | COMPRESSION_ZSTD
+            | COMPRESSION_LZMA
+            | COMPRESSION_PACKBITS
+    )
+}
+
+/// Re-read every IFD of the finished output and, for lossless codecs, compare
+/// it with what was encoded and with an independent decode of its source page.
+/// The latter catches bugs in the read side of the pipeline, not just in
+/// libtiff's encode/decode round trip.
+unsafe fn verify_output(
+    input: &Path,
+    out: *mut TIFF,
+    written: &[WrittenIfd],
+    compression: u16,
+) -> Result<Verification> {
+    let exact = is_lossless(compression);
+    let src = if exact && written.iter().any(|w| w.source_page.is_some()) {
+        Some(TiffHandle::open(input, "r")?)
     } else {
-        (bps, fmt)
+        None
     };
-    let dst_row_size = ((w as usize) * (target_bps as usize) * (spp as usize) + 7) / 8;
-    let mut dst_row_buf = vec![0u8; dst_row_size];
 
-    if dst_is_tiled {
-        // Tiled checksum verification not supported - libtiff doesn't allow scanline reads on tiled images
-        // and TIFFReadTile has issues in the vendored libtiff
-        if verbose {
-            eprintln!("Warning: Checksum verification skipped for tiled output (not supported)");
-        }
-        // Just verify we can read the first scanline as a basic check
-        let sample = if planar == PLANARCONFIG_SEPARATE { 0 } else { 0 };
-        if TIFFReadScanline(tif_dst, dst_row_buf.as_mut_ptr() as *mut _, 0, sample) < 0 {
-            // Expected for tiled images
-            if verbose {
-                eprintln!("Checksum verification skipped for tiled output");
+    let mut index = 0;
+    loop {
+        let expected = written.get(index).ok_or_else(|| {
+            anyhow!(
+                "Checksum: output has more IFDs than the {} written",
+                written.len()
+            )
+        })?;
+        let digest = ifd_digest(out)
+            .map_err(|e| anyhow!("Checksum: output IFD {} cannot be decoded: {:#}", index, e))?;
+        if exact {
+            if digest != expected.digest {
+                return Err(anyhow!(
+                    "Checksum mismatch: output IFD {} does not decode to the pixels that were encoded",
+                    index
+                ));
             }
-        } else {
-            dst_row_buf.hash(&mut dst_hasher);
-        }
-    } else {
-        // Read destination as scanlines
-        for row in 0..h {
-            for s in 0..spp {
-                let sample = if planar == PLANARCONFIG_SEPARATE { s } else { 0 };
-                if TIFFReadScanline(tif_dst, dst_row_buf.as_mut_ptr() as *mut _, row, sample) < 0 {
-                    return Err(anyhow!("Failed to read destination scanline {} for checksum", row));
+            if let (Some(page), Some(src)) = (expected.source_page, &src) {
+                if TIFFSetDirectory(src.ptr(), page) == 0 {
+                    return Err(anyhow!("Checksum: cannot re-read source page {}", page));
                 }
-                dst_row_buf.hash(&mut dst_hasher);
+                let source = ifd_digest(src.ptr()).map_err(|e| {
+                    anyhow!("Checksum: source page {} cannot be decoded: {:#}", page, e)
+                })?;
+                if source != digest {
+                    return Err(anyhow!(
+                        "Checksum mismatch: output IFD {} differs from source page {}",
+                        index,
+                        page
+                    ));
+                }
+            }
+        }
+        index += 1;
+        if TIFFReadDirectory(out) == 0 {
+            break;
+        }
+    }
+
+    if index != written.len() {
+        return Err(anyhow!(
+            "Checksum: output has {} IFDs but {} were written",
+            index,
+            written.len()
+        ));
+    }
+    Ok(if exact {
+        Verification::Exact
+    } else {
+        Verification::DecodedOnly
+    })
+}
+
+/// Fingerprint the decoded pixels of the current directory, row by row in the
+/// order `RowWriter` receives them. Deliberately independent of the
+/// compression pipeline: plain scanline/tile reads, nodata for sparse strips
+/// and tiles.
+unsafe fn ifd_digest(tif: *mut TIFF) -> Result<u64> {
+    let (mut w, mut h) = (0u32, 0u32);
+    let (mut bps, mut spp, mut fmt, mut planar) = (0u16, 0u16, 0u16, 0u16);
+    TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &mut w);
+    TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &mut h);
+    TIFFGetField(tif, TIFFTAG_BITSPERSAMPLE, &mut bps);
+    TIFFGetField(tif, TIFFTAG_SAMPLESPERPIXEL, &mut spp);
+    TIFFGetField(tif, TIFFTAG_SAMPLEFORMAT, &mut fmt);
+    TIFFGetField(tif, TIFFTAG_PLANARCONFIG, &mut planar);
+    let spp = spp.max(1);
+    let (planes, row_spp) = if planar == PLANARCONFIG_SEPARATE {
+        (spp, 1)
+    } else {
+        (1, spp as usize)
+    };
+    let row_bytes = TIFFScanlineSize(tif) as usize;
+    if row_bytes == 0 {
+        return Err(anyhow!("invalid scanline size"));
+    }
+    let nodata = crate::ffi::get_gdal_nodata(tif).unwrap_or(0.0);
+    let nodata_row =
+        create_nodata_scanline(nodata, bps, fmt, w, spp, planar, &vec![0u8; row_bytes]);
+    let mut hasher = DefaultHasher::new();
+
+    if TIFFIsTiled(tif) == 0 {
+        let mut row_buf = vec![0u8; row_bytes];
+        for s in 0..planes {
+            for row in 0..h {
+                if crate::ffi::is_strile_sparse(tif, TIFFComputeStrip(tif, row, s)) {
+                    hasher.write(&nodata_row);
+                } else if TIFFReadScanline(tif, row_buf.as_mut_ptr() as *mut _, row, s) < 0 {
+                    return Err(anyhow!("failed to read scanline {} (sample {})", row, s));
+                } else {
+                    hasher.write(&row_buf);
+                }
+            }
+        }
+        return Ok(hasher.finish());
+    }
+
+    let (mut tw, mut th) = (0u32, 0u32);
+    TIFFGetField(tif, TIFFTAG_TILEWIDTH, &mut tw);
+    TIFFGetField(tif, TIFFTAG_TILELENGTH, &mut th);
+    let bits_per_pixel = bps as usize * row_spp;
+    if tw == 0 || th == 0 || !(tw as usize * bits_per_pixel).is_multiple_of(8) {
+        return Err(anyhow!(
+            "unsupported tile layout {}x{} at {} bits per pixel",
+            tw,
+            th,
+            bits_per_pixel
+        ));
+    }
+    let tile_row_bytes = tw as usize * bits_per_pixel / 8;
+    let mut tile_buf = vec![0u8; (TIFFTileSize(tif) as usize).max(tile_row_bytes * th as usize)];
+    let mut band = vec![0u8; row_bytes * th as usize];
+    for s in 0..planes {
+        for y in (0..h).step_by(th as usize) {
+            let rows = th.min(h - y) as usize;
+            for x in (0..w).step_by(tw as usize) {
+                let start = x as usize * bits_per_pixel / 8;
+                let len = tile_row_bytes.min(row_bytes - start);
+                let sparse = crate::ffi::is_strile_sparse(tif, TIFFComputeTile(tif, x, y, 0, s));
+                if !sparse && TIFFReadTile(tif, tile_buf.as_mut_ptr() as *mut _, x, y, 0, s) < 0 {
+                    return Err(anyhow!(
+                        "failed to read tile at ({}, {}) (sample {})",
+                        x,
+                        y,
+                        s
+                    ));
+                }
+                for r in 0..rows {
+                    let src = if sparse {
+                        &nodata_row[start..][..len]
+                    } else {
+                        &tile_buf[r * tile_row_bytes..][..len]
+                    };
+                    band[r * row_bytes + start..][..len].copy_from_slice(src);
+                }
+            }
+            for r in 0..rows {
+                hasher.write(&band[r * row_bytes..][..row_bytes]);
             }
         }
     }
-    let dst_hash = dst_hasher.finish();
-
-    if quantize {
-        if verbose {
-            eprintln!("Checksum (quantized): src={:x}, dst={:x} (quantization changes data, hashes will differ)", src_hash, dst_hash);
-        }
-    } else if src_hash != dst_hash {
-        return Err(anyhow!(
-            "Checksum mismatch! Source hash: {:x}, Destination hash: {:x}",
-            src_hash, dst_hash
-        ));
-    } else if verbose {
-        eprintln!("Checksum verified: {:x}", src_hash);
-    }
-
-    Ok(())
+    Ok(hasher.finish())
 }
 
 fn wipe_command(
@@ -2048,22 +2511,11 @@ fn wipe_command(
 ) -> Result<()> {
     let files = expand_tiff_inputs(&input)?;
 
-    // With more than one input, --output must be a directory; otherwise every
-    // file would resolve to the same target (and temp) path and the parallel
-    // workers would race to write/rename it, corrupting the result.
-    if files.len() > 1 {
-        if let Some(ref out) = output {
-            if !out.is_dir() {
-                return Err(anyhow!(
-                    "Multiple input files require --output to be an existing directory, not a file: {:?}",
-                    out
-                ));
-            }
-        }
-    }
+    check_batch_output(files.len(), &output)?;
 
     let m = MultiProgress::new();
     let num_jobs = jobs.unwrap_or_else(num_cpus::get);
+    let failed = AtomicUsize::new(0);
 
     files
         .par_iter()
@@ -2077,12 +2529,10 @@ fn wipe_command(
                 ),
             );
 
-            let target_output = match resolve_target_output(file_path, &output, &pb) {
-                Some(t) => t,
-                None => return,
-            };
-
-            match wipe_single_file(file_path, &target_output, level, verbose, &pb) {
+            let result = resolve_target_output(file_path, &output).and_then(|target_output| {
+                wipe_single_file(file_path, &target_output, level, verbose, &pb)
+            });
+            match result {
                 Ok((original, wiped)) => {
                     pb.finish();
                     let ratio = if original > 0 {
@@ -2102,12 +2552,13 @@ fn wipe_command(
                     );
                 }
                 Err(e) => {
-                    pb.finish_with_message(format!("Error: {}", e));
+                    failed.fetch_add(1, Ordering::Relaxed);
+                    report_file_error(&m, &pb, file_path, &e);
                 }
             }
         });
 
-    Ok(())
+    batch_result(failed.into_inner(), files.len())
 }
 
 fn wipe_single_file(
@@ -2119,8 +2570,13 @@ fn wipe_single_file(
 ) -> Result<(u64, u64)> {
     let original_size = fs::metadata(input)?.len();
 
-    // Get IFD count
+    // Get IFD count (also validates the input before anything is created)
     let total_pages = count_tiff_pages(input)?;
+
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create output directory {:?}", parent))?;
+    }
 
     let c_input = CString::new(
         input
@@ -2152,10 +2608,6 @@ fn wipe_single_file(
             return Err(anyhow!("Failed to open destination TIFF"));
         }
 
-        // Register GeoTIFF tags on both handles
-        crate::metadata::register_geotiff_tags_ffi(tif_src);
-        crate::metadata::register_geotiff_tags_ffi(tif_dst);
-
         let mut page = 0;
         loop {
             if verbose {
@@ -2181,7 +2633,8 @@ fn wipe_single_file(
         TIFFClose(tif_src);
         TIFFClose(tif_dst);
 
-        fs::rename(tmp_path, output)?;
+        fs::rename(&tmp_path, output)
+            .with_context(|| format!("Failed to rename {:?} to {:?}", tmp_path, output))?;
     }
 
     let wiped_size = fs::metadata(output)?.len();
@@ -2532,6 +2985,27 @@ unsafe fn tile_jobs(
     Ok((jobs, tile_width, tile_length))
 }
 
+/// Run `f` with this thread's read handle on `path` at directory `page`. The
+/// handle is cached per thread and reopened when the thread last served a
+/// different file or page (rayon threads are shared across files and pages).
+fn with_worker_handle<R>(path: &CString, page: u16, f: impl FnOnce(*mut TIFF) -> R) -> Result<R> {
+    thread_local! {
+        static HANDLE: RefCell<Option<(CString, u16, *mut TIFF)>> = const { RefCell::new(None) };
+    }
+    HANDLE.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let reusable = matches!(&*cell, Some((p, pg, _)) if p == path && *pg == page);
+        if !reusable {
+            if let Some((_, _, old)) = cell.take() {
+                unsafe { TIFFClose(old) };
+            }
+            let tif = unsafe { open_worker_handle(path, page)? };
+            *cell = Some((path.clone(), page, tif));
+        }
+        Ok(f(cell.as_ref().map(|(_, _, tif)| *tif).unwrap()))
+    })
+}
+
 /// Open an independent read handle on the source file, positioned at `page`.
 /// Used by parallel tile workers (each worker gets its own handle, so there
 /// is no cross-thread or cross-file state).
@@ -2540,7 +3014,6 @@ unsafe fn open_worker_handle(c_path: &CString, page: u16) -> Result<*mut TIFF> {
     if tif.is_null() {
         return Err(anyhow!("Failed to open source TIFF (worker)"));
     }
-    crate::metadata::register_geotiff_tags_ffi(tif);
     if page > 0 && TIFFSetDirectory(tif, page) == 0 {
         TIFFClose(tif);
         return Err(anyhow!("Failed to set directory {} (worker)", page));
@@ -2591,7 +3064,7 @@ unsafe fn histogram_tiled_plane(
                         tif,
                         job.index,
                         tile_buf.as_mut_ptr() as *mut _,
-                        tile_buffer_size as u32,
+                        tile_buffer_size as isize,
                     )
                 };
                 if read < 0 {
@@ -2671,7 +3144,7 @@ unsafe fn read_tiled_plane(
                         tif,
                         tile_index,
                         tile_buf.as_mut_ptr() as *mut _,
-                        tile_buffer_size as u32,
+                        tile_buffer_size as isize,
                     )
                 };
                 if read < 0 {

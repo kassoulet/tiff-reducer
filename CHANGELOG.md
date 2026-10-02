@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`--tile [SIZE]`**: tiled output (default 512x512).
+- **`--overviews <FACTORS>`**: internal overviews for the first page, built while the image streams through (block average ignoring NoData/NaN, nearest for palettes).
+- **`--checksum`**: verifies the written file (against the source pixels for lossless output) before the original is replaced.
 - **`wipe` command**: Replaces image content with synthetic data (per-channel sorted pixel values). The per-channel histogram — and therefore min/max/mean/stdDev — is preserved exactly, while the spatial content is destroyed and the output becomes highly compressible (Zstd + predictor). Useful for sharing statistically representative test files without disclosing the actual imagery.
 
 ### Performance
@@ -18,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Measured: 102400×49152 u8 tiled Zstd file: 45 min / 5.9 GB RSS → **2 min 14 s / 66 MB RSS**; 3762×3613 u16 tiled LZW: 16 s → **0.3 s**.
 
 ### Fixed
+- **GDAL NoData / metadata (tags 42112/42113) are preserved**: they are registered as ASCII tags through a libtiff tag extender, before any directory is read. Files carrying them no longer crash.
+- **Output directory creation**: missing parent directories are now created automatically for both `compress` and `wipe` commands, only once the output is actually written (not for `--dry-run` or rejected inputs); paths ending in `/` are treated as explicit directories (input filename is appended), including for several inputs.
+- **Crash on ReferenceBlackWhite**: `TIFFTAG_YCBCRCOEFFICIENTS` was 532 (ReferenceBlackWhite) instead of 529, and both float-array tags were passed as separate varargs instead of one `float*`. Any TIFF carrying tag 532 segfaulted; both tags are now preserved.
+- **Multi-page tiled files**: pages after the first were decoded from page 0 (and a stale per-thread handle could serve another file).
+- **Sparse tiles** are filled with NoData like sparse strips; other tile decode failures are reported instead of written as zeros. Sparse detection uses `TIFFGetStrileOffset/ByteCount` (the previous `TIFFGetField` call overflowed a stack variable).
+- **Reduced-resolution IFDs keep `NewSubfileType`**, so existing overviews stay overviews.
+- **Failures are reported on stderr and make the exit code non-zero**; temporary files are removed on error.
+- FFI signatures of `TIFFReadTile`, `TIFFWriteTile`, `TIFFRead/WriteEncodedTile` and `TIFFReadEncodedStrip` now match `tiffio.h`.
 - Added `dscf0013.tif` (YCbCr with 2,1 subsampling) to the integration test skip list; it is rejected since the YCbCr subsampling guard was introduced.
 
 ## [0.4.0] - 2026-05-28

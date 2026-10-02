@@ -3,12 +3,13 @@
 use crate::ffi::*;
 use anyhow::{anyhow, Result};
 use libc::c_char;
+use std::sync::OnceLock;
 
 /// Read and clone ALL metadata from source to destination
 /// This function clones all non-conflicting metadata.
 ///
-/// GeoTIFF tags (33550, 33922, 34735, 34736, 34737) are copied after being
-/// registered with libtiff via register_geotiff_tags().
+/// GeoTIFF (33550, 33922, 34735, 34736, 34737) and GDAL (42112, 42113) tags
+/// rely on the definitions registered by `install_tag_extender()`.
 pub unsafe fn clone_metadata(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     // Resolution and units
     copy_tag_float(src, dst, TIFFTAG_XRESOLUTION)?;
@@ -17,6 +18,9 @@ pub unsafe fn clone_metadata(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
 
     // Orientation
     copy_tag_u16(src, dst, TIFFTAG_ORIENTATION)?;
+
+    // NewSubfileType (reduced-resolution / mask flags)
+    copy_tag_u32(src, dst, TIFFTAG_SUBFILETYPE)?;
 
     // FillOrder
     copy_tag_u16(src, dst, TIFFTAG_FILLORDER)?;
@@ -114,27 +118,19 @@ pub unsafe fn copy_ycbcr_tags(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
         }
     }
 
-    // YCbCrCoefficients (three FLOAT values)
-    let mut coeff_r: f32 = 0.0;
-    let mut coeff_g: f32 = 0.0;
-    let mut coeff_b: f32 = 0.0;
-    if TIFFGetField(
-        src,
-        TIFFTAG_YCBCRCOEFFICIENTS,
-        &mut coeff_r,
-        &mut coeff_g,
-        &mut coeff_b,
-    ) != 0
-    {
-        if TIFFSetField(
-            dst,
-            TIFFTAG_YCBCRCOEFFICIENTS,
-            coeff_r as f64,
-            coeff_g as f64,
-            coeff_b as f64,
-        ) == 0
-        {
-            return Err(anyhow!("Failed to set YCbCr coefficients"));
+    // YCbCrCoefficients (3 values) and ReferenceBlackWhite (6 values): libtiff
+    // passes both as a single `float*` (TIFF_SETGET_C0_FLOAT), not as varargs
+    copy_tag_float_array(src, dst, TIFFTAG_YCBCRCOEFFICIENTS)?;
+    copy_tag_float_array(src, dst, TIFFTAG_REFERENCEBLACKWHITE)?;
+    Ok(())
+}
+
+/// Copy a fixed-count float array tag, which libtiff gets and sets as one `float*`.
+unsafe fn copy_tag_float_array(src: *mut TIFF, dst: *mut TIFF, tag: u32) -> Result<()> {
+    let mut values: *mut f32 = std::ptr::null_mut();
+    if TIFFGetField(src, tag, &mut values) != 0 && !values.is_null() {
+        if TIFFSetField(dst, tag, values) == 0 {
+            return Err(anyhow!("Failed to set float array tag {}", tag));
         }
     }
     Ok(())
@@ -193,41 +189,42 @@ pub unsafe fn copy_image_description(src: *mut TIFF, dst: *mut TIFF) -> Result<(
     Ok(())
 }
 
-/// Copy GDAL metadata tags including NoData value
+/// Copy the GDAL metadata (XML) and NoData tags.
+///
+/// Both are ASCII tags; copying the NoData text verbatim keeps GDAL's exact
+/// spelling ("nan", "-3.4028234663852886e+38", ...). Requires the tag extender.
 pub unsafe fn copy_gdal_tags(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
-    // Copy GDAL NoData value
-    let mut nodata: f64 = 0.0;
-    if TIFFGetField(src, TIFFTAG_GDAL_NODATA, &mut nodata) != 0 {
-        if TIFFSetField(dst, TIFFTAG_GDAL_NODATA, nodata) == 0 {
-            return Err(anyhow!("Failed to set GDAL NoData value"));
-        }
-    }
-
-    // Copy GDAL metadata (XML string)
-    let mut meta: *mut c_char = std::ptr::null_mut();
-    if TIFFGetField(src, TIFFTAG_GDAL_METADATA, &mut meta) != 0 {
-        if !meta.is_null() {
-            if TIFFSetField(dst, TIFFTAG_GDAL_METADATA, meta) == 0 {
-                return Err(anyhow!("Failed to set GDAL metadata"));
-            }
-        }
-    }
-    Ok(())
+    copy_tag_ascii(src, dst, TIFFTAG_GDAL_NODATA)?;
+    copy_tag_ascii(src, dst, TIFFTAG_GDAL_METADATA)
 }
 
-/// Registers GeoTIFF tags for reading/writing with the vendored libtiff.
-/// Must be called after TIFFOpen and before any GeoTIFF tag operations.
-pub unsafe fn register_geotiff_tags(tif: *mut TIFF) {
-    use crate::ffi::{
-        TIFFFieldInfo, TIFFMergeFieldInfo, FIELD_CUSTOM, TIFFTAG_GEOASCIIPARAMSTAG,
-        TIFFTAG_GEODOUBLEPARAMSTAG, TIFFTAG_GEOKEYDIRECTORYTAG, TIFFTAG_MODELPIXELSCALETAG,
-        TIFFTAG_MODELTIEPOINTTAG, TIFF_ASCII, TIFF_DOUBLE, TIFF_SHORT, TIFF_VARIABLE2,
-    };
+/// Previously installed tag extender, chained from ours.
+static PREVIOUS_EXTENDER: OnceLock<Option<TIFFExtendProc>> = OnceLock::new();
 
-    struct SyncFieldInfo([TIFFFieldInfo; 5]);
+/// Install a libtiff tag extender registering the GeoTIFF and GDAL tags on
+/// every handle. Call once at startup, before opening any file.
+///
+/// The extender runs inside `TIFFDefaultDirectory`, i.e. *before* a directory
+/// is parsed. Merging field info after `TIFFOpen` (as this code used to) is
+/// too late for the source handle: libtiff has already given unknown tags an
+/// anonymous definition (passcount = 1), which then wins over ours.
+pub fn install_tag_extender() {
+    PREVIOUS_EXTENDER.get_or_init(|| unsafe { TIFFSetTagExtender(Some(tag_extender)) });
+}
+
+unsafe extern "C" fn tag_extender(tif: *mut TIFF) {
+    register_custom_tags(tif);
+    if let Some(Some(previous)) = PREVIOUS_EXTENDER.get() {
+        previous(tif);
+    }
+}
+
+/// Register GeoTIFF and GDAL tag definitions on `tif`.
+unsafe fn register_custom_tags(tif: *mut TIFF) {
+    struct SyncFieldInfo([TIFFFieldInfo; 7]);
     unsafe impl Sync for SyncFieldInfo {}
 
-    static GEOTIFF_FIELDS: SyncFieldInfo = SyncFieldInfo([
+    static CUSTOM_FIELDS: SyncFieldInfo = SyncFieldInfo([
         TIFFFieldInfo {
             field_tag: TIFFTAG_MODELPIXELSCALETAG,
             field_readcount: TIFF_VARIABLE2,
@@ -278,23 +275,34 @@ pub unsafe fn register_geotiff_tags(tif: *mut TIFF) {
             field_passcount: 1,
             field_name: c"GeoAsciiParamsTag".as_ptr(),
         },
+        // GDAL tags: plain NUL-terminated strings, no count argument
+        TIFFFieldInfo {
+            field_tag: TIFFTAG_GDAL_METADATA,
+            field_readcount: TIFF_VARIABLE,
+            field_writecount: TIFF_VARIABLE,
+            field_type: TIFF_ASCII,
+            field_bit: FIELD_CUSTOM,
+            field_oktochange: 1,
+            field_passcount: 0,
+            field_name: c"GDALMetadata".as_ptr(),
+        },
+        TIFFFieldInfo {
+            field_tag: TIFFTAG_GDAL_NODATA,
+            field_readcount: TIFF_VARIABLE,
+            field_writecount: TIFF_VARIABLE,
+            field_type: TIFF_ASCII,
+            field_bit: FIELD_CUSTOM,
+            field_oktochange: 1,
+            field_passcount: 0,
+            field_name: c"GDALNoDataValue".as_ptr(),
+        },
     ]);
 
-    TIFFMergeFieldInfo(
-        tif,
-        GEOTIFF_FIELDS.0.as_ptr(),
-        GEOTIFF_FIELDS.0.len() as i32,
-    );
-}
-
-/// Public FFI version - registers GeoTIFF tags for reading/writing
-/// Must be called immediately after opening a TIFF file
-pub unsafe fn register_geotiff_tags_ffi(tif: *mut TIFF) {
-    register_geotiff_tags(tif);
+    TIFFMergeFieldInfo(tif, CUSTOM_FIELDS.0.as_ptr(), CUSTOM_FIELDS.0.len() as i32);
 }
 
 /// Copy GeoTIFF tags using the registered tag definitions
-/// Requires that register_geotiff_tags() was called on both src and dst TIFF handles
+/// Requires the definitions registered by `install_tag_extender()`
 unsafe fn copy_geotiff_tags(src: *mut TIFF, dst: *mut TIFF) -> Result<()> {
     // Copy ModelPixelScaleTag (array of 3 doubles)
     let mut pixel_scale: *mut f64 = std::ptr::null_mut();
